@@ -1,4 +1,4 @@
-"""The fake Agent Farm for the CLI tests. See `farm.py` for what it models and why."""
+"""The fake Agent Farm for the CLI tests. See the `farm` module for what it models and why."""
 
 from .farm import (
     ADMIN,

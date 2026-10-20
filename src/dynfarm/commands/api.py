@@ -97,7 +97,7 @@ def api(
       dynfarm api -X GET tasks -f state=running -F limit=5
       dynfarm api tasks --paginate
       dynfarm api -X POST schedules/SCHEDULE_ID/pause
-      echo '{"agent_id": "developer-skills:code-reviewer", "prompt": "..."}' | dynfarm api tasks --input -
+      echo '{"agent_id": "code-reviewer", "prompt": "..."}' | dynfarm api tasks --input -
     """
     route, query = _route(path)
     fields = _fields(raw_fields, typed_fields, uses_stdin=input_file == "-")

@@ -4,9 +4,12 @@
 #   test       the suite on every supported Python, with the coverage floor (pyproject.toml, [tool.coverage.report])
 #   e2e        the installed (not editable) binary, driven in subprocesses against a fake farm on a real socket
 #   package    sdist + wheel built, each installed in a clean venv and run
-#   api-drift  the parity test against the live OpenAPI of the dev farm; scheduled daily, or by hand
-#   publish    only on a tag `v*`: the tag must be the package version, then sdist + wheel go to the project's registry
-#   release    only on a tag `v*`: the GitLab Release, with the changelog section as notes and links to the files
+#   api-drift  the parity test against the live OpenAPI of a farm (URL in the CI/CD variable FARM_OPENAPI_URL)
+#   check-tag  only on a tag `v*`: the tag must be the package version and the changelog must have its section
+#
+# This project is where `dynfarm` is developed. It publishes nothing: a push mirror copies `main` and the tags to the
+# public GitHub repository, whose `release.yml` publishes a tag to PyPI. `check-tag` is that workflow's first gate run
+# here too, so a bad tag shows red on GitLab as well. See "Releasing" in CONTRIBUTING.md.
 #
 # `api-drift` is the only job that touches a farm, and it only downloads a public document: the CI holds no farm token
 # and must not get one. The live smoke test with a real token runs from a developer's machine.
@@ -24,7 +27,6 @@ workflow:
 stages:
   - lint
   - test
-  - release
 
 default:
   interruptible: true
@@ -32,8 +34,6 @@ default:
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
-  # The document the drift job compares the CLI with. Any farm's /openapi.json works; it needs no token.
-  FARM_OPENAPI_URL: "https://farm-dev.ai.dyncloud.es/openapi.json"
 
 .python:
   cache:
@@ -134,10 +134,18 @@ api-drift:
   extends: .python
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
-    # By hand from any pipeline, without blocking it: it depends on the dev farm being reachable.
+    # By hand from any pipeline, without blocking it: it depends on the farm being reachable.
     - when: manual
       allow_failure: true
   script:
+    # The document the drift job compares the CLI with is the URL of a farm's /openapi.json, which needs no token. It is
+    # a CI/CD variable of the project (Settings, CI/CD, Variables), not a value in this public file; unset, the job fails
+    # saying so instead of comparing with nothing.
+    - |
+      if [ -z "${FARM_OPENAPI_URL:-}" ]; then
+        echo "api-drift: set the CI/CD variable FARM_OPENAPI_URL to the URL of a farm's /openapi.json" >&2
+        exit 1
+      fi
     - python tools/fetch_openapi.py "$FARM_OPENAPI_URL" live-openapi.json
     - DYNFARM_PARITY_OPENAPI="$CI_PROJECT_DIR/live-openapi.json" .venv/bin/python -m pytest -q --tb=short tests/test_parity.py
   artifacts:
@@ -145,71 +153,16 @@ api-drift:
     paths: [live-openapi.json]
     expire_in: 1 week
 
-# -- Release: a tag `v<version>` ---------------------------------------------------------------------------------------
+# -- A tag `v<version>` ------------------------------------------------------------------------------------------------
 #
-# The tag pipeline runs every job above first (the stages come before `release`), so nothing is published from a tree
-# whose tests are red. `v*` tags are protected in the project: only a maintainer can cut one. Cutting a tag is a
-# decision of the maintainers, never of this pipeline; see "Releasing" in CONTRIBUTING.md.
+# The GitHub mirror publishes the tag (`.github/workflows/release.yml`) and refuses it when the check below fails. Running
+# the same check here shows the problem where the tag was cut, before the mirror has acted on it. `v*` tags are protected
+# in the project: only a maintainer can cut one, and that is a decision of the maintainers, never of a pipeline.
 
-# The registry takes a version once: a re-run of this job after it uploaded fails instead of replacing the files, which
-# is what a registry is for. Cut a new version instead.
-publish:
-  stage: release
+check-tag:
+  stage: lint
   image: python:3.13-slim
-  extends: .python
-  interruptible: false
-  rules:
-    - if: $CI_COMMIT_TAG =~ /^v/
-  variables:
-    # twine's names; the job token is the registry's credential, so no secret is stored in the project.
-    TWINE_USERNAME: gitlab-ci-token
-    TWINE_PASSWORD: $CI_JOB_TOKEN
-  script:
-    - .venv/bin/python tools/check_tag.py "$CI_COMMIT_TAG" --notes release-notes.md
-    - rm -rf dist
-    - .venv/bin/python -m build
-    - .venv/bin/twine check dist/*
-    - .venv/bin/twine upload --repository-url "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi" dist/*
-    # The registry serves a file at .../pypi/files/<sha256>/<file name>; the release links to exactly those.
-    - |
-      set -eu
-      files="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi/files"
-      for kind in whl tar.gz; do
-        file="$(ls dist/*.$kind)"
-        sum="$(sha256sum "$file" | cut -d' ' -f1)"
-        echo "FILE_$(echo "$kind" | tr '.a-z' '_A-Z')_URL=${files}/${sum}/$(basename "$file")" >> release.env
-      done
-      cat release.env
-  artifacts:
-    paths: [release-notes.md, dist/]
-    reports:
-      dotenv: release.env
-    expire_in: 1 week
-
-release:
-  stage: release
-  image: registry.gitlab.com/gitlab-org/release-cli:v0.24.0
-  needs: [publish]
-  interruptible: false
   rules:
     - if: $CI_COMMIT_TAG =~ /^v/
   script:
-    - echo "Releasing $CI_COMMIT_TAG"
-  release:
-    tag_name: $CI_COMMIT_TAG
-    name: "dynfarm $CI_COMMIT_TAG"
-    description: release-notes.md
-    assets:
-      links:
-        - name: Wheel
-          url: $FILE_WHL_URL
-          link_type: package
-        - name: Source distribution
-          url: $FILE_TAR_GZ_URL
-          link_type: package
-        - name: install.sh (macOS, Linux)
-          url: $CI_PROJECT_URL/-/raw/$CI_COMMIT_TAG/install.sh
-          link_type: other
-        - name: install.ps1 (Windows)
-          url: $CI_PROJECT_URL/-/raw/$CI_COMMIT_TAG/install.ps1
-          link_type: other
+    - python tools/check_tag.py "$CI_COMMIT_TAG"

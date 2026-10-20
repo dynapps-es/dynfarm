@@ -448,11 +448,11 @@ def test_without_an_injected_lookup_the_token_comes_from_dynfarm_token(fake_farm
     assert result.stdout == "dana\n"
 
 
-def test_farm_py_s_variables_alone_configure_nothing_and_no_request_carries_an_authorization_header(
+def test_another_tools_variables_alone_configure_nothing_and_no_request_carries_an_authorization_header(
     fake_farm, monkeypatch
 ):
     monkeypatch.setenv("AGENT_FARM_URL", HOST)
-    monkeypatch.setenv("AGENT_FARM_TOKEN", "tok-bob")  # farm.py's variables: only DYNFARM_* are read
+    monkeypatch.setenv("AGENT_FARM_TOKEN", "tok-bob")  # another tool's variables: only DYNFARM_* are read
     no_farm = CliRunner().invoke(cli, ["ping"], obj=AppContext(transport=fake_farm.transport()))
     assert no_farm.exit_code == 2
     assert "no farm configured" in no_farm.stderr

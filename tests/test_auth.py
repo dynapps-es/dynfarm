@@ -9,7 +9,6 @@ stderr for a sentinel token. The fake farm answers `/whoami`; the keyring is the
 
 from __future__ import annotations
 
-import getpass
 import json
 import os
 import stat
@@ -30,7 +29,6 @@ from dynfarm.tokens import TokenStore
 
 SERVICE = _brand.KEYRING_SERVICE
 OTHER_HOST = "https://other.test"
-LEGACY = _brand.LEGACY_DEFAULT_HOST
 #: A token only these tests use, distinctive enough that finding it anywhere in the output is a leak, not a collision.
 SENTINEL = "tok-sentinel-a17c9e5d"
 
@@ -76,7 +74,7 @@ def test_login_checks_the_token_then_keeps_it_in_the_keyring_and_makes_the_farm_
 ):
     result = login(invoke)
     assert result.exit_code == 0, result.output
-    assert f"Logged in to {HOST} as alice (dynapps-internal)" in result.stderr
+    assert f"Logged in to {HOST} as alice (tenant-a)" in result.stderr
     assert "Token stored in the system keyring" in result.stderr
     assert memory_keyring.entries[(SERVICE, HOST)] == SENTINEL
     assert read_config() == {"default_host": HOST, "hosts": {HOST: {}}}
@@ -168,65 +166,12 @@ def test_login_refuses_plain_http_to_a_remote_farm_before_reading_or_sending_the
     assert not config_path().exists()
 
 
-def test_login_offers_the_farm_py_key_on_a_terminal_for_farm_py_s_farm(invoke, memory_keyring):
-    memory_keyring.entries[(_brand.LEGACY_KEYRING_SERVICE, getpass.getuser())] = SENTINEL
-    result = invoke(["auth", "login", "--hostname", LEGACY], input="y\n", tty=True)
-    assert result.exit_code == 0, result.output
-    assert "farm.py" in result.stderr and _brand.LEGACY_KEYRING_SERVICE in result.stderr
-    assert "Paste your token" not in result.stderr
-    assert memory_keyring.entries[(SERVICE, LEGACY)] == SENTINEL
-    assert_never_shown(result)
-
-
-def test_login_does_not_move_the_farm_py_key_to_another_farm_because_farm_py_s_url_variable_is_set(
-    invoke, memory_keyring, monkeypatch
-):
-    monkeypatch.setenv("AGENT_FARM_URL", HOST)  # farm.py's variable: not read, so it cannot widen the key's farm
-    memory_keyring.entries[(_brand.LEGACY_KEYRING_SERVICE, getpass.getuser())] = BOB
-    result = invoke(["auth", "login", "--hostname", HOST], input=f"{SENTINEL}\n", tty=True)
-    assert result.exit_code == 0, result.output
-    assert "farm.py" not in result.stderr
-    assert memory_keyring.entries[(SERVICE, HOST)] == SENTINEL
-    assert_never_shown(result, BOB)
-
-
-def test_login_without_a_terminal_does_not_take_its_farm_from_the_farm_py_url_variable(invoke, farm, monkeypatch):
+def test_login_without_a_terminal_does_not_take_its_farm_from_another_tools_url_variable(invoke, farm, monkeypatch):
     monkeypatch.setenv("AGENT_FARM_URL", HOST)
     result = invoke(["auth", "login", "--with-token"], input=f"{SENTINEL}\n")
     assert result.exit_code == 2
     assert "which farm? pass --hostname URL" in result.stderr
     assert farm.requests == []
-
-
-def test_the_farm_py_key_is_not_offered_for_another_farm(invoke, memory_keyring):
-    memory_keyring.entries[(_brand.LEGACY_KEYRING_SERVICE, getpass.getuser())] = BOB
-    result = invoke(["auth", "login", "--hostname", HOST], input=f"{SENTINEL}\n", tty=True)
-    assert result.exit_code == 0, result.output
-    assert "farm.py" not in result.stderr
-    assert "Paste your token" in result.stderr
-    assert memory_keyring.entries[(SERVICE, HOST)] == SENTINEL
-
-
-def test_declining_the_farm_py_key_asks_for_another_token(invoke, memory_keyring):
-    memory_keyring.entries[(_brand.LEGACY_KEYRING_SERVICE, getpass.getuser())] = SENTINEL
-    result = invoke(["auth", "login", "--hostname", LEGACY], input=f"n\n{BOB}\n", tty=True)
-    assert result.exit_code == 0, result.output
-    assert "as bob" in result.stderr
-    assert memory_keyring.entries[(SERVICE, LEGACY)] == BOB
-
-
-def test_the_farm_py_key_is_offered_only_on_a_terminal(invoke, memory_keyring):
-    memory_keyring.entries[(_brand.LEGACY_KEYRING_SERVICE, getpass.getuser())] = BOB
-    result = login(invoke, SENTINEL, LEGACY)
-    assert result.exit_code == 0, result.output
-    assert "farm.py" not in result.stderr
-    assert memory_keyring.entries[(SERVICE, LEGACY)] == SENTINEL
-
-
-def test_the_farm_py_key_is_not_offered_when_the_keyring_does_not_have_it(invoke):
-    result = invoke(["auth", "login", "--hostname", HOST], input=f"{SENTINEL}\n", tty=True)
-    assert result.exit_code == 0, result.output
-    assert "farm.py" not in result.stderr
 
 
 def test_login_with_insecure_storage_keeps_the_token_in_a_0600_file(invoke, memory_keyring):
@@ -269,8 +214,8 @@ def test_login_and_logout_warn_when_dynfarm_token_takes_precedence_over_the_stor
     assert_never_shown(logged_out, BOB)
 
 
-def test_the_farm_py_token_variable_is_not_read_by_login_logout_status_or_token(invoke, farm, monkeypatch):
-    monkeypatch.setenv("AGENT_FARM_TOKEN", BOB)  # farm.py's variable: only DYNFARM_* variables are read
+def test_another_tools_token_variable_is_not_read_by_login_logout_status_or_token(invoke, farm, monkeypatch):
+    monkeypatch.setenv("AGENT_FARM_TOKEN", BOB)  # another tool's variable: only DYNFARM_* variables are read
     logged_in = login(invoke)
     assert logged_in.exit_code == 0, logged_in.output
     farm.requests.clear()
@@ -290,7 +235,7 @@ def test_the_farm_py_token_variable_is_not_read_by_login_logout_status_or_token(
     assert_never_shown(status, BOB)
 
 
-def test_the_farm_py_url_variable_names_no_farm_for_status_token_or_switch(invoke, farm, monkeypatch):
+def test_another_tools_url_variable_names_no_farm_for_status_token_or_switch(invoke, farm, monkeypatch):
     monkeypatch.setenv("AGENT_FARM_URL", HOST)
     status = invoke(["auth", "status"])
     assert status.exit_code == 4
@@ -312,7 +257,7 @@ def test_status_reports_two_farms_one_fine_and_one_expired_and_exits_1(invoke):
     assert result.stdout.splitlines() == [
         f"{HOST} (default)",
         "  token from: keyring",
-        "  logged in as alice (dynapps-internal)",
+        "  logged in as alice (tenant-a)",
         "  scopes: farm:credentials:read, farm:credentials:write, farm:tasks:cancel, farm:tasks:read, farm:tasks:write",
         "  expires: 2027-01-01T00:00:00Z",
         OTHER_HOST,
@@ -353,7 +298,7 @@ def test_status_as_json_gives_source_state_and_identity_but_no_token(invoke):
             "state": "ok",
             "source": "keyring",
             "subject": "alice",
-            "tenant": "dynapps-internal",
+            "tenant": "tenant-a",
             "scopes": [
                 "farm:credentials:read",
                 "farm:credentials:write",

@@ -3,9 +3,8 @@
 One token per farm, like `gh`. Looking one up goes, first answer wins:
 
 1. `DYNFARM_TOKEN`: CI and scripts set it, and an explicit environment beats anything stored. It answers for
-   whichever farm is targeted (like `GH_TOKEN`). It is the only environment variable that carries a token: a
-   variable of another tool (the one `farm.py` uses) is not read, so a token meant for one farm is never
-   handed to another by accident.
+   whichever farm is targeted (like `GH_TOKEN`). It is the only environment variable that carries a token: the
+   variable of another tool is not read, so a token meant for one farm is never handed to another by accident.
 2. The OS keyring (Keychain, Windows Credential Manager, Secret Service), service `_brand.KEYRING_SERVICE`, account the
    normalised farm URL, so two farms never share an entry.
 3. `token` in the farm's `[hosts."<url>"]` table of `config.toml`, a `0600` file: only for a farm whose person chose
@@ -14,8 +13,6 @@ One token per farm, like `gh`. Looking one up goes, first answer wins:
 When `CI` is set the keyring is never touched, not even to read: a CI runner has no keyring worth trusting, and a
 backend that opens a dialog would hang the job.
 
-`farm.py`'s keyring entry is not a source: `auth login` may offer it, for `farm.py`'s own farm only (`legacy_host`).
-
 The token is never put in a message. The keyring libraries' own errors can quote what they were handed, so every
 keyring call goes through `_call`, which keeps only the error's class name (`KeyringUnavailable.reason`) and drops the
 original exception (`from None`) so not even a traceback can carry its text.
@@ -23,7 +20,6 @@ original exception (`from None`) so not even a traceback can carry its text.
 
 from __future__ import annotations
 
-import getpass
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -75,11 +71,6 @@ class Saved:
 def in_ci(environ: Mapping[str, str]) -> bool:
     """`CI` set to anything but an explicit no (`0`, `false`, ...): every CI system sets it."""
     return environ.get("CI", "").strip().lower() not in _FALSEY
-
-
-def legacy_host() -> str:
-    """The one farm `farm.py`'s keyring entry belongs to: `farm.py` knows a single, built-in farm."""
-    return normalize_host(_brand.LEGACY_DEFAULT_HOST)
 
 
 def env_token(environ: Mapping[str, str]) -> Resolved | None:
@@ -142,31 +133,6 @@ class TokenStore:
             except KeyringUnavailable:
                 pass
         return self.file_token(host) is not None
-
-    def legacy_token(self, host: str) -> str | None:
-        """The key `farm.py` tells people to keep in the keyring (service `agent-farm-token`, account `$USER`), or None.
-
-        Only for `farm.py`'s own farm (`legacy_host`): for any other `host` it is None without looking, so the key can
-        never be offered to, or sent to, a farm it does not belong to. Only a hint for `auth login`: any failure is
-        "not there", silently.
-        """
-        if in_ci(self.environ) or normalize_host(host) != legacy_host():
-            return None
-        service = _brand.LEGACY_KEYRING_SERVICE
-        try:
-            user = getpass.getuser()
-        except (OSError, KeyError):
-            user = None
-        try:
-            if user:
-                token = self._call("get_password", service, user)
-                if token and token.strip():
-                    return token.strip()
-            credential = self._call("get_credential", service, None)
-        except KeyringUnavailable:
-            return None
-        password = getattr(credential, "password", None)
-        return password.strip() if isinstance(password, str) and password.strip() else None
 
     # -- writing -----------------------------------------------------------------------------------------------
 

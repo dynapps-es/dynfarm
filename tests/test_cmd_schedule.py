@@ -23,7 +23,7 @@ import dynfarm.output as output
 from dynfarm import registry
 
 API = "/farm/api/v1/schedules"
-REVIEWER = "developer-skills:code-reviewer"
+REVIEWER = "example-plugin:code-reviewer"
 WEEKDAYS = "0 8 * * 1-5"
 MADRID = "Europe/Madrid"
 

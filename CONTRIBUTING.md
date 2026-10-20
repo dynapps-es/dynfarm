@@ -1,5 +1,11 @@
 # Contributing to dynfarm
 
+`dynfarm` is developed in a private GitLab project of Dynapps (merge requests, the CI described below, protected
+branches and tags). The public GitHub repository, [dynapps-es/dynfarm](https://github.com/dynapps-es/dynfarm), is a
+**read-only mirror**: a push mirror copies `main` and the tags there, and nothing is ever pushed to it by hand, so a
+pull request opened on GitHub cannot be merged there. Outside contributors: open an issue on GitHub; the maintainers
+carry a change over to the private project. PyPI and the GitHub Releases are fed from the mirror (see "Releasing").
+
 ## Setting up
 
 ```bash
@@ -28,7 +34,7 @@ Repeat the `pip install` after every pull: dependencies are pinned and change wi
 - **The name `dynfarm` lives in `src/dynfarm/_brand.py`.** Never hard-code it elsewhere; derive env names, paths and
   the keyring service from `_brand`.
 - **Every environment variable of the tool starts with `DYNFARM_`** (`_brand.env("NAME")` builds the name). Variables
-  of other tools are not read, not even as an alias — least of all the token variable `farm.py` uses: a token
+  of other tools are not read, not even as an alias — least of all a token variable: a token
   exported for one farm in a shell profile is exactly what must not follow a person to another. The only
   others the code and the install scripts may mention are standard conventions (`CI`, `NO_COLOR`, `TERM`, `HOME`,
   `PATH`, `XDG_*`, the proxy variables httpx reads), each listed with its reason in an allowlist in
@@ -40,12 +46,12 @@ Repeat the `pip install` after every pull: dependencies are pinned and change wi
 `tools/expect_passed.py MIN` is the gate used when running one file: `pytest tests/test_x.py -q | python3
 tools/expect_passed.py 10` fails unless at least 10 tests passed and none failed.
 
-`tests/fixtures/openapi.json` is the Agent Farm API this version of `dynfarm` was written against (es-dev-01,
-pretty-printed, sorted keys). Refresh it when the API changes, after the CLI has been updated to match
+`tests/fixtures/openapi.json` is the Agent Farm API this version of `dynfarm` was written against (a
+development farm's, pretty-printed, sorted keys). Refresh it when the API changes, after the CLI has been updated to match
 (`tests/test_parity.py` says what to update):
 
 ```bash
-python3 tools/fetch_openapi.py https://farm-dev.ai.dyncloud.es/openapi.json tests/fixtures/openapi.json --pretty
+python3 tools/fetch_openapi.py https://farm.example.com/openapi.json tests/fixtures/openapi.json --pretty
 git diff tests/fixtures/openapi.json      # the API's change and nothing else
 ```
 
@@ -62,7 +68,7 @@ you can run locally; the pipeline is red when any of them is.
 | `lint` | style drift, unused imports, unformatted code | `ruff check . && ruff format --check .` |
 | `test` (Python 3.11–3.14) | a behaviour that breaks on one supported Python; untested code (coverage floor) | `pytest --ignore=tests/e2e --cov=dynfarm` |
 | `e2e` | a broken entry point, exit code, `--json`, token or secret handling in the *installed* package | `pip install '.[dev]'` (not `-e`), then `pytest tests/e2e tests/test_secret_leaks.py` |
-| `package` | a wheel or sdist that does not install or run in a clean environment, or whose metadata the registry would refuse | `python -m build && twine check dist/*`, then install `dist/*.whl` in a new venv and run `dynfarm --help` |
+| `package` | a wheel or sdist that does not install or run in a clean environment, or whose metadata PyPI would refuse | `python -m build && twine check dist/*`, then install `dist/*.whl` in a new venv and run `dynfarm --help` |
 | `api-drift` | the API changed under the CLI: a new operation without a command, a changed enum, a new required field, a removed field | `python3 tools/fetch_openapi.py URL live.json && DYNFARM_PARITY_OPENAPI=live.json pytest tests/test_parity.py` |
 
 - **Coverage floor**: `fail_under` in `pyproject.toml` (`[tool.coverage.report]`), measured with branches. It is the
@@ -81,9 +87,12 @@ you can run locally; the pipeline is red when any of them is.
   runs locally without a second install; use a throw-away venv for the non-editable one, or reinstall with `-e` after.
 - **`api-drift` failed**: read the job log; it lists what drifted. If the CLI must change, do it, then refresh the
   fixture (above). If the API change is not meant to be supported, add an `EXCLUDED` entry with the reason. The job also
-  fails when the runner cannot download the document: that is the farm being unreachable, not drift. The job can be
+  fails when the runner cannot download the document: that is the farm being unreachable, not drift. The farm's address is the CI/CD variable `FARM_OPENAPI_URL` of the project (the
+  URL of its `/openapi.json`, which needs no token); the job fails saying so when it is not set. The job can be
   started by hand from any pipeline.
-- **`publish` and `release` run only on a tag `v*`**, after every job above has passed on it (see "Releasing").
+- **`check-tag` runs only on a tag `v*`**: the tag must be the package version and the changelog must have its section
+  (`tools/check_tag.py`), so a bad tag is red on GitLab too. Nothing is published from GitLab: publishing is the job of
+  `.github/workflows/release.yml` on the mirror (see "Releasing").
 - **The live smoke test against a real farm is not in CI**: CI has no farm token and must not get one.
 
 ## Testing a command with the fake farm
@@ -119,41 +128,53 @@ answer too, so a command that sends a field the API does not know fails its test
 ## Releasing
 
 A release is a tag `v<version>` on the default branch, and it is a maintainers' decision: the tag is the act that
-publishes, so nobody cuts one to "see what happens". `v*` tags are protected in the project.
+publishes, so nobody cuts one to "see what happens". `v*` tags are protected in the GitLab project.
 
 1. In one commit on a branch: set `__version__` in `src/dynfarm/__init__.py` (the only place; `pyproject.toml` reads it)
    and turn the `## [x.y.z] - unreleased` heading of `CHANGELOG.md` into `## [x.y.z] - YYYY-MM-DD`. Write what a person
-   upgrading needs to know, because that section is the text of the GitLab Release.
-2. Merge it, with a green pipeline.
-3. Tag the merge commit `vx.y.z` and push the tag. The tag pipeline runs `lint`, `test`, `e2e` and `package` again, then:
-   - `publish` runs `tools/check_tag.py`, which fails when the tag is not exactly `v` + the package version or when the
-     changelog has no section for it; builds the sdist and the wheel; runs `twine check`; and uploads both to the
-     project's package registry with the job token (`TWINE_USERNAME=gitlab-ci-token`, `TWINE_PASSWORD=$CI_JOB_TOKEN`),
-     so no secret is stored for it;
-   - `release` creates the GitLab Release with the changelog section as its notes and links to the wheel, the sdist and
-     the two install scripts at that tag.
-4. Try the install on a clean machine: `sh install.sh x.y.z` (or `.\install.ps1 -Version x.y.z`) and `dynfarm --version`.
+   upgrading needs to know, because that section is the text of the GitHub Release.
+2. Open the merge request, get a green pipeline, and merge it.
+3. Create the protected tag `vx.y.z` on the merge commit in GitLab (Code, Tags) and push it. The tag pipeline runs
+   `lint`, `test`, `e2e`, `package` and `check-tag`; a red `check-tag` says the tag and the version or changelog
+   disagree: delete the tag, fix, tag again.
+4. The push mirror copies `main` and the tag to GitHub. The tag starts `.github/workflows/release.yml`, which runs, in
+   order:
+   - `verify`: `tools/check_tag.py` first, then lint and the whole test suite with its coverage floor;
+   - `build`: the sdist and the wheel, `twine check`;
+   - `publish`: uploads them to PyPI with **Trusted Publishing** (OIDC, no token stored anywhere) in the `pypi` GitHub
+     environment, restricted to `v*` tags. It is the only job that may request an identity token;
+   - `github-release`: creates the GitHub Release with the changelog section as notes and the files attached.
+5. Try the install on a clean machine: `uv tool install dynfarm==x.y.z` (or `sh install.sh x.y.z`) and
+   `dynfarm --version`.
 
-The registry accepts a version once. If `publish` failed after uploading, do not re-run it: fix forward with the next
-patch version. A bad release is not deleted; it is superseded.
+**One-time setup** (done once, by an owner of the PyPI project and of the GitHub repository): on PyPI, add a *pending*
+trusted publisher for the project `dynfarm` (Account settings, Publishing) with owner `dynapps-es`, repository
+`dynfarm`, workflow `release.yml` and environment `pypi`; the first successful run creates the project. In GitHub,
+the environment `pypi` exists and allows only `v*` tags. In GitLab, the push mirror to the repository above covers
+`main` and the tags.
 
-`tools/check_tag.py vX.Y.Z` can be run locally before tagging: it says what would be refused. The install scripts and
-`tests/test_packaging.py` change together: the test pins what the scripts may and may not do (no token in a URL, the
-same registry, git address and index name in both, a version they refuse to pass on to a shell). The scripts are
-tested with a fake `uv`, `git` and `curl` for the shell one; `install.ps1` has no runner in CI, so it is checked
-statically, and a change to it needs a run on a real Windows machine before the tag.
+PyPI accepts a version once. If `publish` failed after uploading, do not re-run it: fix forward with the next patch
+version. A bad release is not deleted; it is superseded, and yanked on PyPI when installers must not pick
+it any more (a yanked version stays installable by exact version).
+
+`tools/check_tag.py vX.Y.Z` can be run locally before tagging: it says what would be refused. The install scripts, the
+workflow and `tests/test_packaging.py` change together: the test pins what the scripts may and may not do (install
+`dynfarm` from PyPI, a version they refuse to pass on to a shell, no credential anywhere) and what the workflow may
+(triggered only by `v*` tags, every action pinned to a commit SHA, `id-token: write` in `publish` alone, the order of
+the jobs). When you bump an action, look the commit up (`gh api repos/OWNER/ACTION/commits/TAG --jq .sha`) and keep the
+version in the comment next to it. The shell script is tested with a fake `uv` and `curl`; `install.ps1` has no
+runner in CI, so it is checked statically, and a change to it needs a run on a real Windows machine before the tag.
 
 ## Live smoke
 
 `tools/smoke_live.sh FARM_URL` drives an installed `dynfarm` against a real farm with a real token, through the real
 system keyring and a temporary config dir: login, status, whoami, the read commands, a far-future schedule created,
 paused and deleted, a throw-away credential set and deleted, logout. It cleans up what it created even when a step
-fails, and launches no task. Install the branch in a fresh venv and give it the token by environment, never on the
-command line:
+fails, and launches no task. Install your checkout in a fresh venv and give the script the token by environment (a
+variable you set from wherever you keep the token, never typed on a command line):
 
 ```bash
-python3 -m venv /tmp/dynfarm-smoke && /tmp/dynfarm-smoke/bin/pip install -q "git+file://$PWD@feat/initial-cli"
-DYNFARM_SMOKE_TOKEN="$(security find-generic-password -s agent-farm-token -w)" \
-  DYNFARM_SMOKE_VALUE="smoke-$(openssl rand -hex 12)" PATH="/tmp/dynfarm-smoke/bin:$PATH" \
-  bash tools/smoke_live.sh https://farm-dev.ai.dyncloud.es
+python3 -m venv /tmp/dynfarm-smoke && /tmp/dynfarm-smoke/bin/pip install -q .       # or "git+file://$PWD@BRANCH"
+DYNFARM_SMOKE_TOKEN=... DYNFARM_SMOKE_VALUE="smoke-$(openssl rand -hex 12)" PATH="/tmp/dynfarm-smoke/bin:$PATH" \
+  bash tools/smoke_live.sh https://farm.example.com
 ```

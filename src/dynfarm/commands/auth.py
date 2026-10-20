@@ -8,9 +8,8 @@ The rules these commands keep, and why:
 - **A token is never printed**, by any command but `auth token`, whose whole job is to hand it to a script
   (`curl -H "Authorization: Bearer $(dynfarm auth token)"`). `status` names where the token came from (`keyring`,
   `file`, `env:DYNFARM_TOKEN`), never any part of it: even a masked prefix narrows a guess.
-- **`farm.py`'s token stays with `farm.py`'s farm.** The `agent-farm-token` keyring entry is offered at `login` only
-  for the farm `farm.py` talks to (its built-in one); `DYNFARM_TOKEN` is the variable that answers for any farm. No
-  variable of `farm.py` is read: every environment variable of the tool is `DYNFARM_*`.
+- **A token from the environment is `DYNFARM_TOKEN`**, the variable that answers for any farm. No variable of
+  another tool is read: every environment variable of the tool is `DYNFARM_*`.
 - **Expired is not invalid.** `status` says "expired — get a new one" for `token_expired` and "invalid" for
   `token_invalid`, because the first is routine (renew) and the second means stop.
 - **There is no default farm**: `login` takes `--hostname`, `DYNFARM_HOST`, or asks; the first
@@ -68,7 +67,7 @@ def login(hostname: str | None, with_token: bool, insecure_storage: bool) -> Non
     """
     store = TokenStore()
     host = _login_host(hostname, store)
-    token = _read_token(with_token, store, host)
+    token = _read_token(with_token)
     try:
         me = _whoami(host, token)
     except FarmError as exc:
@@ -103,7 +102,7 @@ def _login_host(flag: str | None, store: TokenStore) -> str:
     return _normalized("farm URL", answer)
 
 
-def _read_token(with_token: bool, store: TokenStore, host: str) -> str:
+def _read_token(with_token: bool) -> str:
     if with_token:
         token = sys.stdin.readline().strip()
         if not token:
@@ -111,13 +110,6 @@ def _read_token(with_token: bool, store: TokenStore, host: str) -> str:
         return token
     if not commands.is_interactive():
         raise ConfigError("not a terminal, so the token cannot be asked for: pipe it in with --with-token")
-    legacy = store.legacy_token(host)
-    if legacy and click.confirm(
-        f"Use the token farm.py keeps in the system keyring ({_brand.LEGACY_KEYRING_SERVICE}) for {host}?",
-        default=True,
-        err=True,
-    ):
-        return legacy
     token = click.prompt("Paste your token", hide_input=True, err=True).strip()
     if not token:
         raise ConfigError("no token given")

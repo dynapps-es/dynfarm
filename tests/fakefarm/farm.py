@@ -47,7 +47,7 @@ FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "openapi.json"
 #: Host the unit tests give the client when they use `transport()`: any https name works, the transport ignores it.
 HOST = "https://farm.test"
 
-TENANT = "dynapps-internal"
+TENANT = "tenant-a"
 OTHER_TENANT = "acme"
 
 TASK_SCOPES = ("farm:tasks:read", "farm:tasks:write", "farm:tasks:cancel")
@@ -165,14 +165,14 @@ class FakeFarm:
         self._agents: list[dict[str, Any]] = _platform_agents()
         self._plugins = [
             {
-                "name": "developer-skills",
+                "name": "example-plugin",
                 "version": "1.4.0",
                 "commit": "0a1b2c3d",
                 "agents": [
-                    {"name": "code-reviewer", "agent_id": "developer-skills:code-reviewer", "tools": ["Read", "Grep"]}
+                    {"name": "code-reviewer", "agent_id": "example-plugin:code-reviewer", "tools": ["Read", "Grep"]}
                 ],
             },
-            {"name": "common-skills", "version": "2.0.1"},
+            {"name": "other-plugin", "version": "2.0.1"},
         ]
         self._handlers: dict[str, Callable[[Call], tuple[int, Any]]] = {
             name.removeprefix("_op_"): getattr(self, name) for name in dir(self) if name.startswith("_op_")
@@ -245,7 +245,7 @@ class FakeFarm:
 
     def seed_task(self, token: str, *, state: str = "queued", logs: list[str] | None = None, **body: Any) -> str:
         """Create a task owned by the token's person, straight into the model, in the given state."""
-        body.setdefault("agent_id", "developer-skills:code-reviewer")
+        body.setdefault("agent_id", "example-plugin:code-reviewer")
         row = self._new_task(self.tokens[token], body, origin="api")
         self.set_task(row.data["task_id"], state=state)
         row.logs = list(logs or [])
@@ -1144,7 +1144,7 @@ def _platform_agents() -> list[dict[str, Any]]:
             "requires_workspace": workspace,
             "capabilities": {
                 "credentials": credentials,
-                "egress": ["model-gateway", "object-store", "gitlab.dynapps.be"],
+                "egress": ["model-gateway", "object-store", "git.example.com"],
             },
             "default_limits": {"timeout_s": 900, "cpu": "1", "memory": "2Gi"},
             "model_alias": "sonnet",
@@ -1152,9 +1152,7 @@ def _platform_agents() -> list[dict[str, Any]]:
         }
 
     return [
-        agent(
-            "developer-skills:code-reviewer", "Reviews a merge request", credentials=["git-readonly"], workspace=True
-        ),
+        agent("example-plugin:code-reviewer", "Reviews a merge request", credentials=["git-readonly"], workspace=True),
         agent(
             "repo-helper",
             "Reads a repository and answers questions about it",

@@ -10,6 +10,7 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
+keywords = ["agent-farm", "dynapps", "cli", "agents", "ai-agents"]
 authors = [{ name = "Dynapps" }]
 classifiers = [
     "Environment :: Console",
@@ -37,10 +38,12 @@ dev = [
     "twine==7.0.0",
 ]
 
-# The project is private (infra-es is a private group), so these links are for people who already have access.
+# The GitHub repository is the public face of the project: releases, issues and the changelog live there.
 [project.urls]
-Source = "https://gitlab.dynapps.be/infra-es/farm-ai/cli"
-Changelog = "https://gitlab.dynapps.be/infra-es/farm-ai/cli/-/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/dynapps-es/dynfarm"
+Source = "https://github.com/dynapps-es/dynfarm"
+Changelog = "https://github.com/dynapps-es/dynfarm/blob/main/CHANGELOG.md"
+Issues = "https://github.com/dynapps-es/dynfarm/issues"
 
 # The key is the command people type. It must equal `dynfarm._brand.NAME` (tests/test_brand.py).
 [project.scripts]

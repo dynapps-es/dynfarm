@@ -1,7 +1,7 @@
 """Every environment variable of the tool carries the `DYNFARM_` prefix, and the code cannot quietly grow another.
 
-Why this test exists: `dynfarm` once read `farm.py`'s `AGENT_FARM_TOKEN` and `AGENT_FARM_URL` as aliases. A token that
-somebody exported in a shell profile for one tool then followed them into another, and a name without our prefix is
+Why this test exists: `dynfarm` once read another tool's `AGENT_FARM_TOKEN` and `AGENT_FARM_URL` as aliases. A token
+that somebody exported in a shell profile for one tool then followed them into another, and a name without our prefix is
 a name some other tool owns. The rule is now absolute: a variable is `DYNFARM_*`, or it is a standard convention that
 is not ours (`CI`, `NO_COLOR`, `HOME`, ...) and is listed below, with the reason, in `ALLOWED`.
 
@@ -51,14 +51,6 @@ ALLOWED: dict[str, Allowed] = {
         "the freedesktop convention for the per-user bin directory, which uv's installer honours", (SH,)
     ),
     "USERPROFILE": Allowed("Windows' home directory; where uv's installer puts `uv`", (PS1,)),
-    "UV_INDEX_DYNFARM_USERNAME": Allowed(
-        "uv's own credential variable for the index called `dynfarm`; the scripts only SET it, for the uv process",
-        (SH, PS1),
-    ),
-    "UV_INDEX_DYNFARM_PASSWORD": Allowed(
-        "uv's own credential variable for the index called `dynfarm`; the scripts only SET it, for the uv process",
-        (SH, PS1),
-    ),
     # Read by httpx and by nothing of ours: the tool must leave proxying to the HTTP client, not reimplement it.
     "HTTP_PROXY": Allowed("the proxy convention, honoured by httpx itself", ()),
     "HTTPS_PROXY": Allowed("the proxy convention, honoured by httpx itself", ()),
@@ -267,7 +259,7 @@ def test_the_scan_sees_the_variables_the_tool_is_known_to_read():
     found, _ = scan_repository()
     names = {item.name for item in found}
     assert {"DYNFARM_HOST", "DYNFARM_TOKEN", "DYNFARM_CONFIG_DIR", "DYNFARM_DEBUG", "CI", "NO_COLOR", "TERM"} <= names
-    assert {"DYNFARM_INDEX_USERNAME", "DYNFARM_INDEX_PASSWORD"} <= names, "the install scripts' registry variables"
+    assert {"HOME", "XDG_BIN_HOME", "USERPROFILE"} <= names, "the install scripts' conventions"
 
 
 def test_a_read_whose_name_the_scan_cannot_see_is_one_the_person_chose():
@@ -370,7 +362,7 @@ def test_the_shell_scan_flags_a_variable_set_for_a_command_and_leaves_the_script
 
 
 def test_the_shell_scan_ignores_comments_and_accepts_ours():
-    script = '# uses $AGENT_FARM_TOKEN\necho "${DYNFARM_INDEX_USERNAME:-}" "$HOME"\n'
+    script = '# uses $AGENT_FARM_TOKEN\necho "${DYNFARM_TOKEN:-}" "$HOME"\n'
     assert violations(sh_variables(script)) == []
 
 
@@ -396,10 +388,10 @@ def test_the_powershell_scan_flags_the_removed_variables_however_they_are_read(s
 def test_the_powershell_scan_ignores_comments_compares_names_case_insensitively_and_accepts_ours():
     script = (
         "<#\n$env:AGENT_FARM_TOKEN in help text\n#>\n# $env:AGENT_FARM_URL\n"
-        '$env:Path = "$env:USERPROFILE;$env:DYNFARM_INDEX_PASSWORD"\n'
+        '$env:Path = "$env:USERPROFILE;$env:DYNFARM_TOKEN"\n'
     )
     found = ps1_variables(script)
-    assert [item.name for item in found] == ["Path", "USERPROFILE", "DYNFARM_INDEX_PASSWORD"]
+    assert [item.name for item in found] == ["Path", "USERPROFILE", "DYNFARM_TOKEN"]
     assert violations(found) == []
 
 
@@ -417,6 +409,5 @@ def test_the_removed_variables_appear_nowhere_a_person_or_a_script_reads():
             assert name not in text, f"{path.relative_to(ROOT)} still mentions {name}"
 
 
-def test_the_brand_module_keeps_no_name_for_them():
-    assert not [name for name in dir(_brand) if name.startswith("LEGACY_ENV")]
-    assert _brand.LEGACY_KEYRING_SERVICE == "agent-farm-token", "the keychain import is not an environment variable"
+def test_the_brand_module_keeps_no_name_for_another_tools_settings():
+    assert not [name for name in dir(_brand) if name.startswith("LEGACY")]

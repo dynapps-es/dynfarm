@@ -9,7 +9,6 @@ an in-memory keyring (`conftest.memory_keyring`), never the real one.
 
 from __future__ import annotations
 
-import getpass
 import os
 import stat
 import tomllib
@@ -31,7 +30,7 @@ from dynfarm.tokens import KeyringUnavailable, Resolved, TokenStore, token_for
 
 SERVICE = _brand.KEYRING_SERVICE
 SENTINEL = "tok-sentinel-5be1c0de"
-LEGACY = _brand.LEGACY_DEFAULT_HOST
+ANOTHER = "https://another-farm.example"
 CUSTOMER = "https://customer-farm.example"
 
 
@@ -88,10 +87,10 @@ def test_dynfarm_token_wins_over_the_keyring_and_the_file(store, memory_keyring,
     assert store.resolve(HOST) == Resolved(ALICE, "env:DYNFARM_TOKEN")
 
 
-def test_the_farm_py_token_variable_is_not_read_whatever_farm_it_is_set_for(store, memory_keyring, monkeypatch):
-    monkeypatch.setenv("AGENT_FARM_TOKEN", ALICE)  # farm.py's variable: only DYNFARM_* are read
+def test_another_tools_token_variable_is_not_read_whatever_farm_it_is_set_for(store, memory_keyring, monkeypatch):
+    monkeypatch.setenv("AGENT_FARM_TOKEN", ALICE)  # another tool's variable: only DYNFARM_* are read
     memory_keyring.entries[(SERVICE, CUSTOMER)] = BOB
-    assert store.resolve(LEGACY) is None
+    assert store.resolve(ANOTHER) is None
     assert store.resolve(HOST) is None
     assert store.resolve(CUSTOMER) == Resolved(BOB, "keyring")
     monkeypatch.setenv("AGENT_FARM_URL", HOST)
@@ -100,7 +99,7 @@ def test_the_farm_py_token_variable_is_not_read_whatever_farm_it_is_set_for(stor
 
 def test_dynfarm_token_answers_for_any_farm(store, monkeypatch):
     monkeypatch.setenv("DYNFARM_TOKEN", ALICE)
-    for host in (HOST, CUSTOMER, LEGACY):
+    for host in (HOST, CUSTOMER, ANOTHER):
         assert store.resolve(host) == Resolved(ALICE, "env:DYNFARM_TOKEN")
 
 
@@ -221,13 +220,11 @@ def test_forget_removes_the_keyring_entry_and_the_file_token_and_moves_the_defau
 def test_with_ci_set_the_keyring_is_never_touched(store, memory_keyring, warnings, monkeypatch):
     monkeypatch.setenv("CI", "true")
     memory_keyring.entries[(SERVICE, HOST)] = BOB
-    memory_keyring.entries[(_brand.LEGACY_KEYRING_SERVICE, getpass.getuser())] = BOB
     assert store.resolve(HOST) is None
     saved = store.remember(HOST, ALICE)
     assert saved.where == "file"
     assert "CI is set" in warnings[0]
     assert store.resolve(HOST) == Resolved(ALICE, "file")
-    assert store.legacy_token(LEGACY) is None
     assert store.has_stored_token(HOST) is True
     store.forget(HOST)
     assert memory_keyring.calls == []
@@ -265,31 +262,6 @@ def test_a_missing_keyring_is_silent_when_reading(store, warnings, use_keyring):
     assert warnings == []
 
 
-# -- farm.py's key ------------------------------------------------------------------------------------------------
-
-
-def test_the_farm_py_key_is_read_from_its_service_under_the_users_account(store, memory_keyring):
-    memory_keyring.entries[(_brand.LEGACY_KEYRING_SERVICE, getpass.getuser())] = f"  {BOB}\n"
-    assert store.legacy_token(LEGACY) == BOB
-
-
-def test_the_farm_py_key_is_only_for_farm_py_s_farm_and_is_not_even_read_for_another(
-    store, memory_keyring, monkeypatch
-):
-    memory_keyring.entries[(_brand.LEGACY_KEYRING_SERVICE, getpass.getuser())] = BOB
-    assert store.legacy_token(CUSTOMER) is None
-    assert memory_keyring.calls == []
-    monkeypatch.setenv("AGENT_FARM_URL", HOST)  # farm.py's variable is not read: it cannot move the key to another farm
-    assert store.legacy_token(HOST) is None
-    assert store.legacy_token(LEGACY) == BOB
-
-
-def test_there_is_no_farm_py_key_when_the_keyring_lacks_it_or_is_broken(store, use_keyring):
-    assert store.legacy_token(LEGACY) is None
-    use_keyring(BrokenKeyring())
-    assert store.legacy_token(LEGACY) is None
-
-
 # -- the provider commands use -------------------------------------------------------------------------------------
 
 
@@ -310,10 +282,10 @@ def test_a_command_with_no_injected_lookup_uses_the_stored_token(fake_farm, memo
     assert token_for(HOST) == BOB
 
 
-@pytest.mark.parametrize("farm", [CUSTOMER, LEGACY])
-def test_the_farm_py_token_variable_is_sent_to_no_farm_not_even_farm_py_s_own(fake_farm, monkeypatch, farm):
+@pytest.mark.parametrize("farm", [CUSTOMER, ANOTHER])
+def test_another_tools_token_variable_is_sent_to_no_farm_whichever_it_is(fake_farm, monkeypatch, farm):
     monkeypatch.setitem(cli.lazy_commands, "who", f"{__name__}:who")
-    monkeypatch.setenv("AGENT_FARM_TOKEN", ALICE)  # exported in a shell profile for farm.py
+    monkeypatch.setenv("AGENT_FARM_TOKEN", ALICE)  # exported in a shell profile for another tool
     result = CliRunner().invoke(cli, ["who", "--hostname", farm], obj=AppContext(transport=fake_farm.transport()))
     assert result.exit_code == 4
     assert f"no token for {farm}" in result.stderr

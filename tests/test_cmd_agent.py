@@ -23,7 +23,7 @@ import dynfarm.output as output
 from dynfarm import registry
 
 API = "/farm/api/v1/agents"
-REVIEWER = "developer-skills:code-reviewer"
+REVIEWER = "example-plugin:code-reviewer"
 
 
 def body_of(request) -> dict:

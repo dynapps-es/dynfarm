@@ -148,7 +148,7 @@ def assert_contained(child: Child, secret: str, *, posts: int = 1) -> None:
 
 
 def stored(fake_farm, name: str, *, scope: str = "personal", subject: str | None = "alice") -> str | None:
-    return fake_farm.credential_values.get(("dynapps-internal", scope, subject if scope == "personal" else None, name))
+    return fake_farm.credential_values.get(("tenant-a", scope, subject if scope == "personal" else None, name))
 
 
 # -- each way in --------------------------------------------------------------------------------------------------

@@ -16,7 +16,7 @@ import pytest
 from fakefarm import ADMIN, ALICE, BOB, EXPIRED, HOST, OTHER, READONLY, FakeFarm
 
 API = HOST + "/farm/api/v1"
-TASK = {"agent_id": "developer-skills:code-reviewer", "input": "Review my open MRs."}
+TASK = {"agent_id": "example-plugin:code-reviewer", "input": "Review my open MRs."}
 RECURRENCE = {"cron": "0 8 * * 1-5", "timezone": "Europe/Madrid"}
 
 
@@ -132,7 +132,7 @@ def test_whoami_tells_who_is_calling_and_every_answer_carries_the_token_expiry(f
     response = call(fake_farm, "GET", "/whoami")
     assert response.json()["subject"] == "alice"
     assert response.json()["is_admin"] is False
-    assert response.headers["x-agent-farm-token-expires-at"] == "2027-01-01T00:00:00Z"
+    assert response.headers["X-Agent-Farm-Token-Expires-At"] == "2027-01-01T00:00:00Z"
     assert call(fake_farm, "GET", "/whoami", ADMIN).json()["is_admin"] is True
 
 
@@ -257,9 +257,9 @@ def test_a_succeeded_task_has_a_result_whose_presigned_url_needs_no_token(fake_f
 
 def test_the_catalogue_lists_platform_agents_and_plugins(fake_farm):
     slugs = [a["slug"] for a in call(fake_farm, "GET", "/agents").json()["items"]]
-    assert "developer-skills:code-reviewer" in slugs
+    assert "example-plugin:code-reviewer" in slugs
     assert call(fake_farm, "GET", "/agents/repo-helper").json()["scope"] == "platform"
-    assert call(fake_farm, "GET", "/plugins").json()["items"][0]["name"] == "developer-skills"
+    assert call(fake_farm, "GET", "/plugins").json()["items"][0]["name"] == "example-plugin"
     assert call(fake_farm, "GET", "/callback-key").json()["keys"][0]["alg"] == "EdDSA"
 
 

@@ -23,7 +23,7 @@ from dynfarm import registry
 from dynfarm.cli import cli
 from dynfarm.taskbody import TaskFlags, build_task_body, task_body_options
 
-REVIEWER = "developer-skills:code-reviewer"
+REVIEWER = "example-plugin:code-reviewer"
 TERMINAL = ("succeeded", "failed", "cancelled", "expired")
 
 
@@ -101,7 +101,7 @@ def test_run_with_a_prompt_sends_only_the_prompt(run_cli, fake_farm):
 def test_run_json_is_the_farms_answer_verbatim(run_cli, fake_farm):
     answer = printed(run_cli(["task", "run", "--prompt", "hi", "--json"]))
     assert set(answer) >= {"task_id", "tenant", "state", "correlation_id", "created_at"}
-    assert answer["task_id"] in fake_farm._tasks and answer["tenant"] == "dynapps-internal"
+    assert answer["task_id"] in fake_farm._tasks and answer["tenant"] == "tenant-a"
 
 
 def test_run_tells_on_stderr_that_the_farm_stores_the_prompt_and_the_input(run_cli):

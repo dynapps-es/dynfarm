@@ -1,31 +1,16 @@
 #!/bin/sh
 # Install dynfarm on macOS or Linux:   sh install.sh [VERSION]      (VERSION is 0.1.0 or v0.1.0; default: the latest)
 #
-# It installs `uv` (https://docs.astral.sh/uv/) when it is missing, then installs dynfarm as a tool of its own, in its
-# own environment, from one of two places:
+# It installs `uv` (https://docs.astral.sh/uv/) when it is missing, then installs dynfarm from PyPI as a tool of its
+# own, in its own environment (`uv tool install dynfarm`, or `dynfarm==VERSION`), and runs `dynfarm --version`.
+# Nothing here needs a credential: the package is public. Piped from the web it is
 #
-#   the project's package registry   when DYNFARM_INDEX_USERNAME and DYNFARM_INDEX_PASSWORD are set (a GitLab
-#                                    user name and a personal access token with the `read_api` scope).
-#   git                              otherwise, with the git credentials you already have for gitlab.dynapps.be.
-#
-# Every variable of ours carries the DYNFARM_ prefix. A token never travels in a URL and is never printed: the two
-# variables are handed to uv under the names it reads, in the environment of the one `uv` process that needs them
-# (a `NAME=value command` prefix), so they are not exported to anything else this script runs, nor to your shell.
-# The project is private, so one of the two ways of signing in is needed; see "Install" in README.md.
-#
-# uv syntax this relies on (uv 0.5 and later; docs.astral.sh/uv/concepts/indexes/):
-#   --index NAME=URL                      an extra package index with a name (`uv tool install --help`);
-#   UV_INDEX_<NAME>_USERNAME / _PASSWORD  the credentials of the index called NAME, NAME upper-cased with `-` as `_`
-#                                         ("Providing credentials" in the indexes page). The index is searched before
-#                                         PyPI, which still serves the dependencies.
+#   curl -LsSf https://raw.githubusercontent.com/dynapps-es/dynfarm/main/install.sh | sh
+#   curl -LsSf https://raw.githubusercontent.com/dynapps-es/dynfarm/main/install.sh | sh -s -- 0.1.0
 
 set -eu
 
 NAME="dynfarm"
-# The index's name decides the variables uv reads: dynfarm -> UV_INDEX_DYNFARM_USERNAME / UV_INDEX_DYNFARM_PASSWORD.
-INDEX_NAME="dynfarm"
-REGISTRY_URL="https://gitlab.dynapps.be/api/v4/projects/4378/packages/pypi/simple"
-GIT_URL="https://gitlab.dynapps.be/infra-es/farm-ai/cli.git"
 INSTALLER_URL="https://astral.sh/uv/install.sh"
 
 say() { printf '%s\n' "$*"; }
@@ -38,9 +23,8 @@ usage() {
     cat << USAGE
 Usage: sh install.sh [VERSION]
 
-Installs $NAME with uv (installing uv first when it is missing). VERSION is 0.1.0 or v0.1.0; without it, the latest.
-With DYNFARM_INDEX_USERNAME and DYNFARM_INDEX_PASSWORD set it installs from the project's package registry,
-otherwise from git with your git credentials for gitlab.dynapps.be.
+Installs $NAME from PyPI with uv (installing uv first when it is missing). VERSION is 0.1.0 or v0.1.0; without it,
+the latest.
 USAGE
 }
 
@@ -59,7 +43,7 @@ for arg in "$@"; do
             ;;
     esac
 done
-# The version ends up in a requirement and in a git ref: accept what a release is called and nothing else.
+# The version ends up in a requirement: accept what a release is called and nothing else.
 case "$version" in
     "" | [0-9]*) ;;
     *) fail "'$version' is not a version like 0.1.0" ;;
@@ -96,30 +80,10 @@ fi
 
 # -- dynfarm -------------------------------------------------------------------------------------------------------
 
-if [ -n "${DYNFARM_INDEX_USERNAME:-}" ] && [ -n "${DYNFARM_INDEX_PASSWORD:-}" ]; then
-    requirement="$NAME"
-    [ -z "$version" ] || requirement="$NAME==$version"
-    say "Installing $requirement from the project's package registry"
-    UV_INDEX_DYNFARM_USERNAME="$DYNFARM_INDEX_USERNAME" UV_INDEX_DYNFARM_PASSWORD="$DYNFARM_INDEX_PASSWORD" \
-        uv tool install --reinstall --index "$INDEX_NAME=$REGISTRY_URL" "$requirement" ||
-        fail "uv could not install $requirement from the registry: check the user name and the token (read_api scope)"
-else
-    command -v git > /dev/null 2>&1 || fail "git is needed to install without registry credentials (see README.md)"
-    if [ -z "$version" ]; then
-        # The newest tag by version number, not by date. Asking also proves the person's git credentials work here.
-        tags="$(git ls-remote --tags --refs --sort=-v:refname "$GIT_URL" 'v*')" ||
-            fail "git could not read $GIT_URL: sign in to gitlab.dynapps.be with git, or set DYNFARM_INDEX_USERNAME and DYNFARM_INDEX_PASSWORD"
-        # Final releases only (v1.2.3): a pre-release such as v1.3.0rc1 sorts above v1.3.0 and must not be "the latest".
-        tag="$(printf '%s\n' "$tags" | grep -E 'refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '1s|.*refs/tags/||p')"
-        [ -n "$tag" ] || fail "no release tag found in $GIT_URL"
-    else
-        tag="v$version"
-        git ls-remote --exit-code --tags --refs "$GIT_URL" "refs/tags/$tag" > /dev/null ||
-            fail "git could not find the tag $tag in $GIT_URL (no access, or no such release)"
-    fi
-    say "Installing $NAME $tag from git ($GIT_URL)"
-    uv tool install --reinstall "git+$GIT_URL@$tag" || fail "uv could not install $NAME from git"
-fi
+requirement="$NAME"
+[ -z "$version" ] || requirement="$NAME==$version"
+say "Installing $requirement from PyPI"
+uv tool install --reinstall "$requirement" || fail "uv could not install $requirement from PyPI (is the version published?)"
 
 # -- check ---------------------------------------------------------------------------------------------------------
 

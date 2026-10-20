@@ -206,7 +206,7 @@ def run(
     """Launch a task: an AGENT with --input, or a free --prompt.
 
     \b
-    dynfarm task run developer-skills:code-reviewer --input "Review MR 42 of group/project."
+    dynfarm task run code-reviewer --input "Review MR 42 of group/project."
     dynfarm task run --prompt "Summarise the open TODOs." --scope docs --watch
     dynfarm task run --body-file task.json --exit-status      # workspace, limits... have no flag
     """

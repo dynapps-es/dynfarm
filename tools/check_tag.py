@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Gate of the release pipeline: `python3 tools/check_tag.py v0.1.0 [--notes release-notes.md]`.
+"""Gate of the release: `python3 tools/check_tag.py v0.1.0 [--notes release-notes.md]`.
+
+The GitHub release workflow runs it first, and the GitLab pipeline runs it on a tag too.
 
 A tag `v<version>` may only release the version the code says it is. The version has one source, `__version__` in
 `src/dynfarm/__init__.py`; the wheel is built from it, so a tag cut on the wrong commit, or before the bump, would
-publish a package whose version disagrees with its tag, and the registry never lets a version be uploaded twice.
+publish a package whose version disagrees with its tag, and PyPI never lets a version be uploaded twice.
 This script fails the pipeline before anything is published when:
 
 - the tag is not exactly `v` + the package version;
-- `CHANGELOG.md` has no `## [<version>]` section, because the GitLab Release takes its notes from it.
+- `CHANGELOG.md` has no `## [<version>]` section, because the GitHub Release takes its notes from it.
 
 With `--notes FILE` it also writes that section (without its heading) to FILE for the release job.
 
@@ -65,7 +67,7 @@ def check(tag: str, version: str, changelog_text: str) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Check that a release tag matches the package version.")
-    parser.add_argument("tag", help="the tag being released, e.g. v0.1.0 ($CI_COMMIT_TAG)")
+    parser.add_argument("tag", help="the tag being released, e.g. v0.1.0 ($CI_COMMIT_TAG, $GITHUB_REF_NAME)")
     parser.add_argument("--notes", type=Path, help="write the changelog section of this version to FILE")
     args = parser.parse_args(argv)
 

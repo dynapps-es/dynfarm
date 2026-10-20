@@ -42,7 +42,7 @@ def rows(result) -> list[list[str]]:
     return [line.split("\t") for line in result.stdout.splitlines()]
 
 
-def stored(fake_farm, name, *, subject="alice", scope="personal", tenant="dynapps-internal") -> str | None:
+def stored(fake_farm, name, *, subject="alice", scope="personal", tenant="tenant-a") -> str | None:
     """The value the fake farm keeps for a credential (what a task would receive), or None."""
     return fake_farm.credential_values.get((tenant, scope, subject if scope == "personal" else None, name))
 
@@ -107,7 +107,7 @@ def test_set_reads_the_value_from_standard_input_and_says_saved_with_the_fingerp
     [request] = sent(fake_farm, "write_credential")
     assert body_of(request) == {"name": "git-readonly", "type": "git_token", "value": SECRET}
     assert stored(fake_farm, "git-readonly") == SECRET
-    fingerprint = fake_farm._credentials[("dynapps-internal", "personal", "alice", "git-readonly")]["fingerprint"]
+    fingerprint = fake_farm._credentials[("tenant-a", "personal", "alice", "git-readonly")]["fingerprint"]
     assert result.stdout == f"Saved credential git-readonly (git_token, fingerprint {fingerprint})\n"
     assert_not_shown(result)
 

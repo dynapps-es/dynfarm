@@ -2,50 +2,38 @@
 
 `dynfarm` is a command-line client for the Dynapps Agent Farm API, in the spirit of `gh` and `glab`: every API
 operation as a command, several farms with their own tokens kept in the system keyring, and the operations that must
-never go through an LLM — handing over a secret — done safely from the terminal.
+never go through an LLM — handing over a secret — done safely from the terminal. You need a farm to talk to and a
+token for it; both come from whoever runs the farm.
 
 ## Install
 
-`dynfarm` is a Python package (3.11 or later) that installs as a tool of its own, with its own environment, through
-[`uv`](https://docs.astral.sh/uv/). The project is private to Dynapps for now, so every way below needs you to be signed
-in to `gitlab.dynapps.be`: either with **git** (the credentials you already use to clone) or with a **GitLab personal
-access token** with the `read_api` scope (Preferences, Access tokens). Keep the token in an environment variable, never
-in a URL.
-
-**macOS and Linux.** The script installs `uv` when it is missing, then `dynfarm`, then runs `dynfarm --version`:
+`dynfarm` is a Python package (3.11 or later) published on [PyPI](https://pypi.org/project/dynfarm/). The best way to
+install a command-line tool is in an environment of its own, so its pinned dependencies cannot clash with anything
+else on the machine:
 
 ```bash
-git clone https://gitlab.dynapps.be/infra-es/farm-ai/cli.git && sh cli/install.sh        # signed in with git
-# or, without cloning, with a token in GITLAB_TOKEN (it travels in a header, not in the URL):
-curl -fsSL --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
-  "https://gitlab.dynapps.be/api/v4/projects/4378/repository/files/install.sh/raw?ref=main" | sh
+uv tool install dynfarm       # recommended: https://docs.astral.sh/uv/
+pipx install dynfarm          # the same idea, with pipx
+pip install dynfarm           # into the Python environment that is active
 ```
 
-**Windows (PowerShell).**
+If you have none of those tools, the install script puts [`uv`](https://docs.astral.sh/uv/) in place when it is
+missing, then installs `dynfarm` with it and runs `dynfarm --version`:
+
+```bash
+# macOS, Linux
+curl -LsSf https://raw.githubusercontent.com/dynapps-es/dynfarm/main/install.sh | sh
+```
 
 ```powershell
-git clone https://gitlab.dynapps.be/infra-es/farm-ai/cli.git; .\cli\install.ps1
-# or, without cloning, with a token in $env:GITLAB_TOKEN:
-irm -Headers @{ "PRIVATE-TOKEN" = $env:GITLAB_TOKEN } "https://gitlab.dynapps.be/api/v4/projects/4378/repository/files/install.ps1/raw?ref=main" | iex
+# Windows
+powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/dynapps-es/dynfarm/main/install.ps1 | iex"
 ```
 
-Both scripts install the latest release; a version goes after the script (`sh cli/install.sh 0.1.0`,
-`.\cli\install.ps1 -Version 0.1.0`, or `| sh -s -- 0.1.0` when piped). Which source they use depends on one thing:
-
-- **The package registry of the project**, when `DYNFARM_INDEX_USERNAME` (your GitLab user name) and
-  `DYNFARM_INDEX_PASSWORD` (a personal access token with the `read_api` scope) are set. The scripts hand them to `uv`
-  for the one install and nowhere else: they never put them in a URL, print them or leave them in your shell. The
-  registry is `https://gitlab.dynapps.be/api/v4/projects/4378/packages/pypi/simple`.
-- **git**, otherwise, at the release tag (`git+https://gitlab.dynapps.be/infra-es/farm-ai/cli.git@v0.1.0`), with your
-  git credentials.
-
-**By hand**, with the tool you prefer:
-
-```bash
-# git (the registry is what the scripts above are for: they sign uv in without a credential in a URL):
-uv tool install git+https://gitlab.dynapps.be/infra-es/farm-ai/cli.git@v0.1.0
-pipx install git+https://gitlab.dynapps.be/infra-es/farm-ai/cli.git@v0.1.0
-```
+Both install the latest release. To pin a version, name it: `uv tool install dynfarm==0.1.0`, or
+`curl -LsSf https://raw.githubusercontent.com/dynapps-es/dynfarm/main/install.sh | sh -s -- 0.1.0`. Read a script
+before you pipe it into a shell: they are [`install.sh`](https://github.com/dynapps-es/dynfarm/blob/main/install.sh)
+and [`install.ps1`](https://github.com/dynapps-es/dynfarm/blob/main/install.ps1), short and without credentials.
 
 If `dynfarm` is not found afterwards, `uv` installed it in a directory that is not on your `PATH` yet: run
 `uv tool update-shell` and open a new terminal. Check it with `dynfarm --version`.
@@ -56,7 +44,7 @@ If `dynfarm` is not found afterwards, `uv` installed it in a directory that is n
 dynfarm auth login --hostname https://farm.example.com     # asks for your token (hidden) and checks it with the farm
 dynfarm whoami                                             # who the farm thinks you are, and what you may do
 dynfarm plugin list                                        # what the farm can run
-dynfarm task run developer-skills:code-reviewer --input "Review MR 42 of group/project." --watch
+dynfarm task run code-reviewer --input "Review MR 42 of group/project." --watch
 ```
 
 Your farm's address and your token come from whoever runs the farm. `dynfarm --help` lists the commands and
@@ -99,10 +87,8 @@ dynfarm auth logout --hostname https://other-farm.example.com
   OS's per-user config directory), readable only by you, and `dynfarm` warns you when it falls back to it.
 - **Where the token is looked for**, first answer wins: `DYNFARM_TOKEN`, the keyring, the config file.
   `DYNFARM_TOKEN` answers for whichever farm a command talks to. Every environment variable of `dynfarm` starts with
-  `DYNFARM_`: the variables of other tools, such as the token and URL variables `farm.py` uses, are not read.
-- **If you already use `farm.py`**: on a terminal `auth login` offers the key `farm.py` keeps in the keyring (service
-  `agent-farm-token`), but only for the one farm `farm.py` talks to, `https://farm-dev.ai.dyncloud.es`, and never for
-  another. For any other farm, log in with its own token or set `DYNFARM_TOKEN`.
+  `DYNFARM_`: the variables of other tools, such as another client's token or URL variables, are not read, so a token
+  exported for one farm never follows you to another.
 - **`auth status` never prints the token**, only where it came from; it tells an expired token (get a new one) from
   an invalid one (the farm does not accept it), and exits 1 when any farm has a problem.
 - **`auth token` is the one command that prints it**, for scripts:
@@ -112,24 +98,29 @@ dynfarm auth logout --hostname https://other-farm.example.com
 
 ### CI
 
-Set `DYNFARM_HOST` and `DYNFARM_TOKEN` (a masked, protected CI variable) and run commands; no `auth login` needed.
-When `CI` is set, `dynfarm` never touches a keyring, not even to read. In a GitLab CI job of another project, install it
-from this project's registry with `install.sh`, which takes the credentials from variables and never from a URL.
-Define `DYNFARM_INDEX_USERNAME` (a GitLab user name) and `DYNFARM_INDEX_PASSWORD` (its `read_api` token) as masked,
-protected CI variables of your project, next to `DYNFARM_TOKEN`:
+In a pipeline there is no keyring and no terminal. Define `DYNFARM_HOST` (the farm's address) and `DYNFARM_TOKEN` as
+CI variables, the token **masked** (and protected, where your CI offers it), install `dynfarm` from PyPI and run
+commands; no `auth login` is needed. When `CI` is set (every CI system sets it), `dynfarm` never touches a keyring,
+not even to read. Pin the version you tested, so a new release cannot change a pipeline that nobody touched.
 
 ```yaml
+# GitLab CI
 review:
   image: python:3.13-slim
   variables:
-    DYNFARM_HOST: https://farm.example.com
+    DYNFARM_HOST: https://farm.example.com      # DYNFARM_TOKEN: a masked CI/CD variable of the project
   script:
-    - pip install -q uv
-    - >
-      curl -fsSL --header "PRIVATE-TOKEN: $DYNFARM_INDEX_PASSWORD"
-      "https://gitlab.dynapps.be/api/v4/projects/4378/repository/files/install.sh/raw?ref=main" | sh
-    - export PATH="$(uv tool dir --bin):$PATH"
-    - dynfarm task run developer-skills:code-reviewer --input "Review MR $CI_MERGE_REQUEST_IID." --exit-status
+    - pip install -q dynfarm==0.1.0
+    - dynfarm task run code-reviewer --input "Review MR $CI_MERGE_REQUEST_IID." --exit-status
+```
+
+```yaml
+# GitHub Actions
+- run: pip install -q dynfarm==0.1.0
+- run: dynfarm task run code-reviewer --input "Review PR ${{ github.event.pull_request.number }}." --exit-status
+  env:
+    DYNFARM_HOST: https://farm.example.com
+    DYNFARM_TOKEN: ${{ secrets.DYNFARM_TOKEN }}
 ```
 
 `--exit-status` makes the job fail unless the task succeeded.
@@ -152,7 +143,7 @@ A task is an agent working on something for you: a catalogue agent with an input
 it to the end, read what it produced.
 
 ```bash
-dynfarm task run developer-skills:code-reviewer --input "Review MR 42 of group/project." --watch
+dynfarm task run code-reviewer --input "Review MR 42 of group/project." --watch
 dynfarm task run --prompt-file prompt.txt --scope docs --correlation-id nightly-docs-2026-10-20
 dynfarm task run --body-file task.json --exit-status      # a complete task as JSON; exits 1 unless it succeeds
 dynfarm task list --state running --state queued          # newest first; --all follows every page, --json for scripts
@@ -194,7 +185,7 @@ the last two.
 dynfarm agent list                                  # slug, scope, owner, description; --scope, --owner me, --json
 dynfarm agent view web-manager                      # instructions, what it may touch (credentials, egress), limits
 dynfarm agent create web-manager --scope personal --instructions-file web-manager.md --description "Keeps the site up"
-dynfarm agent create reviewer --scope team --plugin-agent developer-skills:code-reviewer --requires-workspace
+dynfarm agent create reviewer --scope team --plugin-agent my-plugin:code-reviewer --requires-workspace
 dynfarm agent create etl --scope personal --from-file etl.json     # credentials, mcp_servers, egress, limits...
 dynfarm agent edit web-manager --description "Keeps the site up to date"
 echo '{"instructions": null}' | dynfarm agent edit web-manager --from-file -     # null clears a field
@@ -223,7 +214,7 @@ A schedule is a task the farm launches again and again: "review my open MRs ever
 recurrence (a cron in a timezone) and what to do when a firing is due while the previous task still runs.
 
 ```bash
-dynfarm schedule create developer-skills:code-reviewer --input "Review my open MRs." \
+dynfarm schedule create code-reviewer --input "Review my open MRs." \
     --cron "0 8 * * 1-5" --timezone Europe/Madrid
 dynfarm schedule create --prompt-file digest.txt --scope docs --cron "0 7 * * 1" --timezone UTC --max-runs 10
 dynfarm schedule create --body-file task.json --recurrence-file recurrence.json --overlap allow
@@ -318,7 +309,7 @@ dynfarm api whoami
 dynfarm api -X GET tasks -f state=running -F limit=5        # fields are the query string on GET
 dynfarm api tasks --paginate -F limit=50                    # follow next_cursor, merge every page's items
 dynfarm api -X POST schedules/SCHEDULE_ID/pause
-dynfarm api tasks -f agent_id=developer-skills:code-reviewer -f prompt='review my change'   # POST: a JSON body
+dynfarm api tasks -f agent_id=code-reviewer -f prompt='review my change'   # POST: a JSON body
 echo '{"prompt": "...", "workspace": {"repo": "..."}}' | dynfarm api tasks --input -
 dynfarm api whoami -i                                       # status line and headers first
 ```
@@ -385,10 +376,9 @@ never repeated by itself.
 | `CI` | When set, no keyring is touched: the token must come from `DYNFARM_TOKEN` |
 | `NO_COLOR` | No colour in the output |
 | `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` | Honoured, as by any HTTP client |
-| `DYNFARM_INDEX_USERNAME`, `DYNFARM_INDEX_PASSWORD` | Not read by `dynfarm` but by the install scripts: the credentials for the project's package registry (see Install) |
 
 Every variable of `dynfarm` starts with `DYNFARM_`; the others in the table are conventions that are not ours. The
-variables of other tools, such as the token and URL variables `farm.py` uses, are not read.
+variables of other tools, such as another client's token or URL variables, are not read.
 
 ### Shell completion
 
@@ -401,9 +391,11 @@ Open a new shell afterwards. Candidates come from `dynfarm` itself, so they are 
 
 ## Upgrade and uninstall
 
-Run the install script again: it installs the latest release (or the one you name) over the current one. By hand, repeat
-the `uv tool install` command of your way in with `--reinstall` (and the new tag, for git). `dynfarm --version` says
-which one you have.
+```bash
+uv tool upgrade dynfarm       # pipx: pipx upgrade dynfarm      pip: pip install --upgrade dynfarm
+```
+
+`dynfarm --version` says which one you have. Running the install script again also installs the latest release.
 
 To remove it: `dynfarm auth logout --hostname URL` for each farm (that deletes the stored token), then
 `uv tool uninstall dynfarm`. The config directory (`DYNFARM_CONFIG_DIR`) holds only your farms' addresses and, if the
@@ -411,5 +403,7 @@ machine had no keyring, plain-text tokens: delete it too. Logging out does not r
 
 ## Releases
 
-Released versions, and what each changed, are in [CHANGELOG.md](CHANGELOG.md); each one is also a GitLab Release of the
-project, with the files and the install scripts attached. Contributors: see [CONTRIBUTING.md](CONTRIBUTING.md).
+Released versions, and what each changed, are in the [changelog](https://github.com/dynapps-es/dynfarm/blob/main/CHANGELOG.md);
+each one is also a [GitHub Release](https://github.com/dynapps-es/dynfarm/releases) with its files attached. Found a
+bug, or want a command added? [Open an issue](https://github.com/dynapps-es/dynfarm/issues). Contributors: see
+[CONTRIBUTING.md](https://github.com/dynapps-es/dynfarm/blob/main/CONTRIBUTING.md).

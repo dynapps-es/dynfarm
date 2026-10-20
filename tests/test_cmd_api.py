@@ -18,6 +18,9 @@ from fakefarm import ALICE, BOB, EXPIRED, OTHER
 
 from dynfarm import registry
 
+#: The header the farm puts on every answer to say when the token used expires (an `Agent-Farm` API header).
+EXPIRY_HEADER = "X-Agent-Farm-Token-Expires-At"
+
 
 def body_of(request) -> dict:
     return json.loads(request.body)
@@ -33,7 +36,7 @@ def printed(result):
 
 def test_a_plain_call_prints_the_farms_answer_as_json(run_cli, fake_farm):
     answer = printed(run_cli(["api", "whoami"]))
-    assert answer["subject"] == "alice" and answer["tenant"] == "dynapps-internal"
+    assert answer["subject"] == "alice" and answer["tenant"] == "tenant-a"
     assert [(r.method, r.path) for r in fake_farm.requests] == [("GET", "/farm/api/v1/whoami")]
 
 
@@ -70,14 +73,14 @@ def test_the_token_of_the_selected_person_is_used_so_each_tenant_sees_its_own(ru
 
 
 def test_fields_become_a_json_body_when_the_method_is_not_get(run_cli, fake_farm):
-    result = run_cli(["api", "-X", "POST", "tasks", "-f", "agent_id=developer-skills:code-reviewer", "-f", "scope=ci"])
+    result = run_cli(["api", "-X", "POST", "tasks", "-f", "agent_id=example-plugin:code-reviewer", "-f", "scope=ci"])
     assert printed(result)["state"] == "queued"
     sent = fake_farm.requests[-1]
-    assert sent.method == "POST" and body_of(sent) == {"agent_id": "developer-skills:code-reviewer", "scope": "ci"}
+    assert sent.method == "POST" and body_of(sent) == {"agent_id": "example-plugin:code-reviewer", "scope": "ci"}
 
 
 def test_giving_fields_without_a_method_means_post_as_in_gh(run_cli, fake_farm):
-    printed(run_cli(["api", "tasks", "-f", "agent_id=developer-skills:code-reviewer"]))
+    printed(run_cli(["api", "tasks", "-f", "agent_id=example-plugin:code-reviewer"]))
     assert fake_farm.requests[-1].method == "POST"
 
 
@@ -118,17 +121,17 @@ def test_input_from_standard_input_is_the_json_body(run_cli, fake_farm):
 
 def test_input_from_a_file_with_fields_sends_the_fields_in_the_query(run_cli, fake_farm, tmp_path):
     body = tmp_path / "task.json"
-    body.write_text(json.dumps({"agent_id": "developer-skills:code-reviewer"}))
+    body.write_text(json.dumps({"agent_id": "example-plugin:code-reviewer"}))
     printed(run_cli(["api", "tasks", "--input", str(body), "-f", "note=x"]))
     sent = fake_farm.requests[-1]
     assert sent.method == "POST" and sent.query == {"note": ["x"]}
-    assert body_of(sent) == {"agent_id": "developer-skills:code-reviewer"}
+    assert body_of(sent) == {"agent_id": "example-plugin:code-reviewer"}
     fake_farm.take_violations()  # `note` is not an API parameter; the point is where it went
 
 
 def test_a_call_with_an_empty_answer_prints_nothing_and_succeeds(run_cli, fake_farm):
     schedule = {
-        "task": {"agent_id": "developer-skills:code-reviewer"},
+        "task": {"agent_id": "example-plugin:code-reviewer"},
         "recurrence": {"cron": "0 9 * * 1", "timezone": "Europe/Madrid"},
     }
     created = printed(run_cli(["api", "schedules", "--input", "-"], input=json.dumps(schedule)))
@@ -311,7 +314,7 @@ def test_include_prints_the_status_and_headers_before_the_body(run_cli):
     result = run_cli(["api", "whoami", "--include"])
     head, _, body = result.stdout.partition("\n\n")
     assert head.splitlines()[0] == "HTTP 200 OK"
-    assert any(line.lower().startswith("x-agent-farm-token-expires-at:") for line in head.splitlines())
+    assert any(line.lower().startswith(EXPIRY_HEADER.lower() + ":") for line in head.splitlines())
     assert json.loads(body)["subject"] == "alice"
 
 

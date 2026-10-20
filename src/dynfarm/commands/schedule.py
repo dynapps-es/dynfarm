@@ -253,7 +253,7 @@ def create(
     """Create a schedule: a task (an AGENT with --input, or a --prompt) and when to launch it.
 
     \b
-    dynfarm schedule create developer-skills:code-reviewer --input "Review my open MRs." \\
+    dynfarm schedule create code-reviewer --input "Review my open MRs." \\
         --cron "0 8 * * 1-5" --timezone Europe/Madrid
     dynfarm schedule create --prompt-file digest.txt --scope docs --cron "0 7 * * 1" --timezone UTC --max-runs 10
     dynfarm schedule create --body-file task.json --recurrence-file recurrence.json --overlap allow

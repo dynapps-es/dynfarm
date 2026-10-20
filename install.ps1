@@ -3,23 +3,11 @@
 Install dynfarm on Windows:   .\install.ps1 [-Version 0.1.0]      (without -Version: the latest)
 
 .DESCRIPTION
-Installs uv (https://docs.astral.sh/uv/) when it is missing, then installs dynfarm as a tool of its own, in its own
-environment, from one of two places:
+Installs uv (https://docs.astral.sh/uv/) when it is missing, then installs dynfarm from PyPI as a tool of its own, in
+its own environment (uv tool install dynfarm, or dynfarm==VERSION), and runs dynfarm --version. Nothing here needs a
+credential: the package is public. Piped from the web it is
 
-  the project's package registry   when DYNFARM_INDEX_USERNAME and DYNFARM_INDEX_PASSWORD are set (a GitLab user
-                                   name and a personal access token with the read_api scope).
-  git                              otherwise, with the git credentials you already have for gitlab.dynapps.be.
-
-Every variable of ours carries the DYNFARM_ prefix. A token never travels in a URL and is never printed: the two
-variables are handed to uv under the names it reads, only while the uv process runs, and then put back as they were
-(this script is often run inside an open terminal, whose environment must not keep them). The project is private, so
-one of the two ways of signing in is needed; see "Install" in README.md.
-
-uv syntax this relies on (uv 0.5 and later; docs.astral.sh/uv/concepts/indexes/):
-  --index NAME=URL                      an extra package index with a name (uv tool install --help);
-  UV_INDEX_<NAME>_USERNAME / _PASSWORD  the credentials of the index called NAME, NAME upper-cased with - as _
-                                        ("Providing credentials" in the indexes page). The index is searched before
-                                        PyPI, which still serves the dependencies.
+  powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/dynapps-es/dynfarm/main/install.ps1 | iex"
 
 .PARAMETER Version
 The release to install, 0.1.0 or v0.1.0. Default: the latest.
@@ -32,10 +20,6 @@ param(
 $ErrorActionPreference = "Stop"
 
 $Name = "dynfarm"
-# The index's name decides the variables uv reads: dynfarm -> UV_INDEX_DYNFARM_USERNAME / UV_INDEX_DYNFARM_PASSWORD.
-$IndexName = "dynfarm"
-$RegistryUrl = "https://gitlab.dynapps.be/api/v4/projects/4378/packages/pypi/simple"
-$GitUrl = "https://gitlab.dynapps.be/infra-es/farm-ai/cli.git"
 $UvInstallerUrl = "https://astral.sh/uv/install.ps1"
 
 # `throw`, not `exit`: this script is often run as `& ([scriptblock]::Create(...))` from an open terminal, where `exit`
@@ -55,7 +39,7 @@ if ($Version.StartsWith("v")) {
     $Version = $Version.Substring(1)
     if ($Version -eq "") { Fail "'$Given' is not a version like 0.1.0" }
 }
-# The version ends up in a requirement and in a git ref: accept what a release is called and nothing else.
+# The version ends up in a requirement: accept what a release is called and nothing else.
 if ($Version -ne "" -and $Version -notmatch '^[0-9][0-9A-Za-z.+!_-]*$') {
     Fail "'$Version' is not a version like 0.1.0"
 }
@@ -78,46 +62,11 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 
 # -- dynfarm -------------------------------------------------------------------------------------------------------
 
-if ($env:DYNFARM_INDEX_USERNAME -and $env:DYNFARM_INDEX_PASSWORD) {
-    $Requirement = $Name
-    if ($Version -ne "") { $Requirement = "$Name==$Version" }
-    Write-Host "Installing $Requirement from the project's package registry"
-    $SavedUsername = $env:UV_INDEX_DYNFARM_USERNAME
-    $SavedPassword = $env:UV_INDEX_DYNFARM_PASSWORD
-    $env:UV_INDEX_DYNFARM_USERNAME = $env:DYNFARM_INDEX_USERNAME
-    $env:UV_INDEX_DYNFARM_PASSWORD = $env:DYNFARM_INDEX_PASSWORD
-    try {
-        Invoke-Native "uv could not install $Requirement from the registry: check the user name and the token (read_api scope)" `
-            "uv" @("tool", "install", "--reinstall", "--index", "$IndexName=$RegistryUrl", $Requirement)
-    } finally {
-        # Assigning $null removes a variable: back to what the session had, which is usually nothing.
-        $env:UV_INDEX_DYNFARM_USERNAME = $SavedUsername
-        $env:UV_INDEX_DYNFARM_PASSWORD = $SavedPassword
-    }
-} else {
-    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-        Fail "git is needed to install without registry credentials (see README.md)"
-    }
-    if ($Version -eq "") {
-        # The newest tag by version number, not by date. Asking also proves the person's git credentials work here.
-        $Tags = & git ls-remote --tags --refs --sort=-v:refname $GitUrl "v*"
-        if ($LASTEXITCODE -ne 0) {
-            Fail "git could not read ${GitUrl}: sign in to gitlab.dynapps.be with git, or set DYNFARM_INDEX_USERNAME and DYNFARM_INDEX_PASSWORD"
-        }
-        # Final releases only (v1.2.3): a pre-release such as v1.3.0rc1 sorts above v1.3.0 and must not be "the latest".
-        $Tag = $Tags | ForEach-Object { if ($_ -match 'refs/tags/(v[0-9]+\.[0-9]+\.[0-9]+)$') { $Matches[1] } } |
-            Select-Object -First 1
-        if (-not $Tag) { Fail "no release tag found in $GitUrl" }
-    } else {
-        $Tag = "v$Version"
-        & git ls-remote --exit-code --tags --refs $GitUrl "refs/tags/$Tag" | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            Fail "git could not find the tag $Tag in $GitUrl (no access, or no such release)"
-        }
-    }
-    Write-Host "Installing $Name $Tag from git ($GitUrl)"
-    Invoke-Native "uv could not install $Name from git" "uv" @("tool", "install", "--reinstall", "git+$GitUrl@$Tag")
-}
+$Requirement = $Name
+if ($Version -ne "") { $Requirement = "$Name==$Version" }
+Write-Host "Installing $Requirement from PyPI"
+Invoke-Native "uv could not install $Requirement from PyPI (is the version published?)" `
+    "uv" @("tool", "install", "--reinstall", $Requirement)
 
 # -- check ---------------------------------------------------------------------------------------------------------
 

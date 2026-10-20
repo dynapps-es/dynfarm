@@ -2,7 +2,7 @@
 
 These are the rules every command inherits: hosts are written one way (so a keyring account and a config table agree),
 resolution is `--hostname` > `DYNFARM_HOST` > the config's default and fails closed when nothing answers (there is
-no built-in farm; the URL variable of `farm.py` is not read), plain `http` is refused unless loopback, and the config
+no built-in farm; another tool's URL variable is not read), plain `http` is refused unless loopback, and the config
 file, which can hold a token, is private and replaced atomically.
 """
 
@@ -92,8 +92,8 @@ def test_the_flag_beats_the_environment_which_beats_the_config(monkeypatch):
     assert resolve_host("from-flag.example.com") == "https://from-flag.example.com"
 
 
-def test_farm_py_s_url_variable_is_not_read_so_it_neither_beats_the_config_nor_names_a_farm(monkeypatch):
-    monkeypatch.setenv("AGENT_FARM_URL", "from-farm-py.example.com")
+def test_another_tools_url_variable_is_not_read_so_it_neither_beats_the_config_nor_names_a_farm(monkeypatch):
+    monkeypatch.setenv("AGENT_FARM_URL", "from-another-tool.example.com")
     with pytest.raises(ConfigError) as caught:
         resolve_host()
     assert caught.value.exit_code == 2

@@ -1,14 +1,18 @@
-"""A tag becomes an installable release, and nothing in the way in can leak the token that opens the registry.
+"""A tag becomes a public PyPI release through a workflow that cannot publish by accident, and installs openly.
 
 Why these tests exist: the release path runs rarely (once per version) and in places a developer does not watch — a
-tag pipeline, a stranger's laptop, a PowerShell prompt — so it must be pinned where it is cheap:
+GitHub runner, a stranger's laptop, a PowerShell prompt — so it must be pinned where it is cheap:
 
 - the version has one source, and the gate that stops a tag from publishing a package that disagrees with it can fail;
-- the pipeline's `publish` and `release` jobs run on tags and only on tags, and publish with the job token;
-- the install scripts agree with each other and with the pipeline, never put a credential in a URL, and refuse a
-  version that is not a version before it reaches a shell, a requirement or a git ref;
-- `install.sh` is *run*, against a fake `uv`, `git` and `curl`, because "it passes `sh -n`" says nothing about which
-  arguments reach `uv`; `install.ps1` has no interpreter here or in CI, so it is read, not run;
+- the release workflow starts on a `v*` tag and on nothing else, runs the gate and the tests before it builds, hands
+  PyPI an OIDC identity from one job only (Trusted Publishing: there is no token to leak), and every action it uses is
+  pinned to a commit, because a tag of somebody else's action can be moved to run code with that identity;
+- GitLab, where the project is developed, publishes nothing: it only shows a bad tag red;
+- the install scripts put `dynfarm` from PyPI on the machine, never handle a credential, and refuse a version that is
+  not a version before it reaches a shell or a requirement;
+- `install.sh` is *run*, against a fake `uv` and `curl`, because "it passes `sh -n`" says nothing about which arguments
+  reach `uv`; `install.ps1` has no interpreter here or in CI, so it is read, not run;
+- nothing public points at the private GitLab: a link a reader cannot open, or a hostname that is not theirs to see;
 - the built wheel carries the brand module, the new command and the entry point;
 - the README documents what the code does (every command, every exit code, every environment variable), because a
   user guide that drifts from the tool is the first thing a person trips on.
@@ -39,6 +43,7 @@ from dynfarm.cli import COMMANDS, cli
 ROOT = Path(__file__).resolve().parents[1]
 INSTALL_SH = ROOT / "install.sh"
 INSTALL_PS1 = ROOT / "install.ps1"
+WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+([abc]\d+|rc\d+|\.post\d+|\.dev\d+)?$")
 
 # What a credential inside a URL looks like: `https://user:secret@host`, `https://token@host`, or a token in the query.
@@ -49,7 +54,7 @@ CREDENTIAL_IN_URL = re.compile(
     re.IGNORECASE,
 )
 
-FAKE_TOKEN = "fake-registry-token-0123456789"
+FAKE_TOKEN = "fake-token-0123456789"
 
 
 def load_tool(name: str):
@@ -66,6 +71,10 @@ def check_tag():
 
 def ci() -> dict:
     return yaml.safe_load((ROOT / ".gitlab-ci.yml").read_text())
+
+
+def workflow() -> dict:
+    return yaml.safe_load(WORKFLOW.read_text())
 
 
 # -- the version ---------------------------------------------------------------------------------------------------
@@ -85,7 +94,7 @@ def test_the_first_release_is_0_1_0_and_the_changelog_says_what_it_holds(check_t
     assert section and "dynfarm auth" in section and "dynfarm credential" in section
 
 
-# -- the gate between a tag and the registry -----------------------------------------------------------------------
+# -- the gate between a tag and PyPI --------------------------------------------------------------------------------
 
 
 def run_check_tag(*args: str) -> subprocess.CompletedProcess[str]:
@@ -137,63 +146,168 @@ def test_a_tag_is_compared_with_the_version_in_the_source_file_without_importing
         check_tag.package_version(source)
 
 
-# -- the pipeline --------------------------------------------------------------------------------------------------
+# -- the GitLab pipeline: it publishes nothing ----------------------------------------------------------------------
 
 
-def test_publish_and_release_run_on_tags_and_on_nothing_else():
+def test_gitlab_publishes_nothing_it_only_checks_the_tag_so_a_bad_one_is_red_there_too():
     pipeline = ci()
-    for name in ("publish", "release"):
-        rules = pipeline[name]["rules"]
-        assert rules, name
-        for rule in rules:
-            assert rule.get("if", "").startswith("$CI_COMMIT_TAG =~ /^v"), (
-                f"{name} has a rule that is not a v* tag: {rule}"
-            )
-            assert rule.get("when", "on_success") == "on_success"
-        assert pipeline[name]["stage"] == "release"
-    assert [name for name, job in pipeline.items() if isinstance(job, dict) and job.get("stage") == "release"] == [
-        "publish",
-        "release",
-    ]
+    assert "publish" not in pipeline and "release" not in pipeline
+    assert "release" not in pipeline["stages"]
+    job = pipeline["check-tag"]
+    assert job["rules"] == [{"if": "$CI_COMMIT_TAG =~ /^v/"}]
+    assert job["script"] == ['python tools/check_tag.py "$CI_COMMIT_TAG"']
+    text = (ROOT / ".gitlab-ci.yml").read_text()
+    for leftover in ("twine upload", "TWINE_", "CI_JOB_TOKEN", "release-cli", "packages/pypi"):
+        assert leftover not in text, f"{leftover!r} would publish or release from GitLab"
 
 
-def test_the_release_stage_comes_after_every_gate_so_a_red_tree_is_never_published():
-    stages = ci()["stages"]
-    assert stages[-1] == "release" and {"lint", "test"} < set(stages)
-
-
-def test_publish_checks_the_tag_then_uploads_with_the_job_token_and_no_stored_secret():
-    job = ci()["publish"]
-    script = [line for line in job["script"] if isinstance(line, str)]
-    check = next(i for i, line in enumerate(script) if "tools/check_tag.py" in line and "$CI_COMMIT_TAG" in line)
-    upload = next(i for i, line in enumerate(script) if "twine upload" in line)
-    assert check < upload, "the tag must be checked before anything is uploaded"
-    assert "packages/pypi" in script[upload] and "${CI_PROJECT_ID}" in script[upload]
-    assert job["variables"] == {"TWINE_USERNAME": "gitlab-ci-token", "TWINE_PASSWORD": "$CI_JOB_TOKEN"}
-    assert not CREDENTIAL_IN_URL.search("\n".join(script)), "token in a URL"
-
-
-def test_the_release_takes_its_notes_and_links_from_publish():
-    pipeline = ci()
-    release = pipeline["release"]
-    assert release["needs"] == ["publish"]
-    assert release["release"]["tag_name"] == "$CI_COMMIT_TAG"
-    assert release["release"]["description"] == "release-notes.md"
-    assert "release-notes.md" in pipeline["publish"]["artifacts"]["paths"]
-    urls = [link["url"] for link in release["release"]["assets"]["links"]]
-    assert any(url.endswith("/install.sh") for url in urls) and any(url.endswith("/install.ps1") for url in urls)
-    assert "$FILE_WHL_URL" in urls and "$FILE_TAR_GZ_URL" in urls
-    assert pipeline["publish"]["artifacts"]["reports"]["dotenv"] == "release.env"
-    for url in urls:
-        assert not CREDENTIAL_IN_URL.search(url), url
-
-
-def test_the_ordinary_jobs_still_run_on_a_tag_so_the_release_waits_for_them():
+def test_the_ordinary_jobs_still_run_on_a_tag_so_a_bad_tag_is_seen_with_the_whole_pipeline():
     pipeline = ci()
     assert any(rule.get("if") == "$CI_COMMIT_TAG" for rule in pipeline["workflow"]["rules"])
     for name in ("lint", "test", "e2e", "package"):
         assert pipeline[name]["extends"] == [".python", ".not_scheduled"], name
     assert pipeline[".not_scheduled"]["rules"][-1] == {"when": "on_success"}
+
+
+# -- the release workflow (GitHub, on the public mirror) -----------------------------------------------------------
+
+#: The actions the workflow may use. A new one is a decision: it runs with the identity PyPI trusts.
+EXPECTED_ACTIONS = {
+    "actions/checkout",
+    "actions/setup-python",
+    "actions/upload-artifact",
+    "actions/download-artifact",
+    "pypa/gh-action-pypi-publish",
+}
+FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+
+
+def steps(job: str) -> list[dict]:
+    return workflow()["jobs"][job]["steps"]
+
+
+def run_steps(job: str) -> list[str]:
+    return [step["run"] for step in steps(job) if "run" in step]
+
+
+def needs(job: str) -> list[str]:
+    declared = workflow()["jobs"][job].get("needs", [])
+    return [declared] if isinstance(declared, str) else list(declared)
+
+
+def depends_on(job: str) -> set[str]:
+    """Every job that must have succeeded before `job` starts, directly or through another."""
+    found: set[str] = set()
+    for parent in needs(job):
+        found |= {parent} | depends_on(parent)
+    return found
+
+
+def test_the_workflow_parses_and_has_the_four_jobs_in_the_order_of_a_release():
+    jobs = workflow()["jobs"]
+    assert list(jobs) == ["verify", "build", "publish", "github-release"]
+    assert needs("build") == ["verify"] and needs("publish") == ["build"] and needs("github-release") == ["publish"]
+
+
+def test_the_workflow_starts_on_a_v_tag_and_on_nothing_else():
+    document = workflow()
+    triggers = document.get("on", document.get(True))  # YAML 1.1 reads a bare `on` as the boolean True
+    assert triggers == {"push": {"tags": ["v*"]}}, "any other trigger could publish from a branch or a pull request"
+
+
+def test_every_action_is_pinned_to_a_full_commit_sha_with_its_version_in_a_comment():
+    used = [step["uses"] for job in workflow()["jobs"].values() for step in job["steps"] if "uses" in step]
+    assert {use.partition("@")[0] for use in used} == EXPECTED_ACTIONS
+    for use in used:
+        action, _, ref = use.partition("@")
+        assert FULL_SHA.match(ref), f"{action} is pinned to {ref!r}, not to a 40-hex commit: a tag can be moved"
+    # The comment is how a person (and Dependabot) knows what the SHA stands for.
+    for line in WORKFLOW.read_text().splitlines():
+        if "uses:" in line:
+            assert re.search(r"@[0-9a-f]{40} # v\d+\.\d+\.\d+$", line.strip()), f"no version comment: {line.strip()}"
+
+
+def test_the_workflow_asks_for_nothing_by_default_and_only_publish_may_request_an_identity_token():
+    document = workflow()
+    assert document["permissions"] in ({}, {"contents": "read"}), "the default must be read-only"
+    holders = {
+        name: job.get("permissions", {}).get("id-token")
+        for name, job in document["jobs"].items()
+        if "permissions" in job
+    }
+    assert {name for name, value in holders.items() if value == "write"} == {"publish"}
+    assert workflow()["jobs"]["publish"]["permissions"] == {"id-token": "write"}, "publish needs nothing else"
+
+
+def test_only_the_github_release_job_can_write_to_the_repository():
+    for name, job in workflow()["jobs"].items():
+        contents = job.get("permissions", {}).get("contents")
+        if name == "github-release":
+            assert job["permissions"] == {"contents": "write"}
+        else:
+            assert contents in (None, "read"), f"{name} may write to the repository"
+
+
+def test_publish_runs_in_the_pypi_environment_and_gives_the_publish_action_no_credential():
+    job = workflow()["jobs"]["publish"]
+    assert job["environment"] == {"name": "pypi", "url": "https://pypi.org/p/dynfarm"}
+    publish = next(step for step in job["steps"] if step["uses"].startswith("pypa/gh-action-pypi-publish@"))
+    assert "with" not in publish and "env" not in publish, "Trusted Publishing takes no password, user or token"
+    assert "secrets." not in WORKFLOW.read_text(), "the workflow must not hold or read a stored secret"
+
+
+def test_publish_waits_for_verify_and_verify_checks_the_tag_before_it_installs_or_runs_anything():
+    assert {"verify", "build"} <= depends_on("publish")
+    assert depends_on("github-release") >= {"verify", "build", "publish"}
+    all_steps = steps("verify")
+    first_run = next(step for step in all_steps if "run" in step)
+    assert first_run["run"] == 'python tools/check_tag.py "$GITHUB_REF_NAME"', "the tag is checked before anything else"
+    # What comes before it only fetches the code and a Python: nothing that could run the project's code.
+    before = all_steps[: all_steps.index(first_run)]
+    assert [step["uses"].partition("@")[0] for step in before] == ["actions/checkout", "actions/setup-python"]
+    rest = "\n".join(run_steps("verify")[1:])
+    assert "pip install" in rest and "pytest" in rest
+
+
+def test_no_job_can_be_made_to_run_after_a_failed_one():
+    for name, job in workflow()["jobs"].items():
+        assert "if" not in job and "continue-on-error" not in job, f"{name} could publish past a red job"
+        assert not any("continue-on-error" in step or "if" in step for step in job["steps"]), name
+
+
+def test_verify_lints_and_runs_the_whole_suite_with_its_coverage_floor():
+    script = "\n".join(run_steps("verify"))
+    assert "ruff check ." in script and "ruff format --check ." in script
+    pytest_line = next(line for line in script.splitlines() if "pytest" in line)
+    assert "--cov=dynfarm" in pytest_line, (
+        "the floor is fail_under in pyproject.toml; pytest-cov only reads it with --cov"
+    )
+    assert "tests/" not in pytest_line and "--ignore" not in pytest_line and " -k" not in pytest_line, "whole suite"
+    assert "pip install -e '.[dev]'" in script
+
+
+def test_build_checks_the_metadata_and_publish_uploads_exactly_what_build_made():
+    build = "\n".join(run_steps("build"))
+    assert "python -m build" in build and "twine check dist/*" in build
+    uploaded = next(step for step in steps("build") if step.get("uses", "").startswith("actions/upload-artifact@"))
+    downloaded = next(
+        step for step in steps("publish") if step.get("uses", "").startswith("actions/download-artifact@")
+    )
+    assert uploaded["with"]["path"] == "dist/" and downloaded["with"]["path"] == "dist/"
+    assert uploaded["with"]["name"] == downloaded["with"]["name"]
+
+
+def test_the_github_release_has_the_changelog_section_as_notes_and_the_built_files_attached():
+    script = "\n".join(run_steps("github-release"))
+    assert 'tools/check_tag.py "$GITHUB_REF_NAME" --notes release-notes.md' in script
+    assert "gh release create" in script and "dist/*" in script and "--notes-file release-notes.md" in script
+    assert "--verify-tag" in script, "the release must not create a tag of its own"
+    gh = next(step for step in steps("github-release") if "gh release create" in step.get("run", ""))
+    assert gh["env"] == {"GH_TOKEN": "${{ github.token }}"}
+
+
+def test_the_workflow_never_puts_a_credential_in_a_url():
+    assert CREDENTIAL_IN_URL.findall(WORKFLOW.read_text()) == []
 
 
 # -- the install scripts -------------------------------------------------------------------------------------------
@@ -203,55 +317,49 @@ def assignments(text: str, pattern: str) -> list[str]:
     return re.findall(pattern, text, re.MULTILINE)
 
 
-def test_both_install_scripts_use_the_same_registry_git_address_and_index_name():
+def code(path: Path) -> str:
+    """A script without its comments and help text: what it does, not what it says about itself."""
+    text = re.sub(r"<#.*?#>", "", path.read_text(), flags=re.DOTALL)
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+
+
+def test_both_install_scripts_install_the_same_package_from_pypi_and_the_same_uv():
     sh, ps1 = INSTALL_SH.read_text(), INSTALL_PS1.read_text()
-    registry = [
-        assignments(sh, r'^REGISTRY_URL="([^"]+)"'),
-        assignments(ps1, r'^\$RegistryUrl = "([^"]+)"'),
-    ]
-    git = [assignments(sh, r'^GIT_URL="([^"]+)"'), assignments(ps1, r'^\$GitUrl = "([^"]+)"')]
-    index = [assignments(sh, r'^INDEX_NAME="([^"]+)"'), assignments(ps1, r'^\$IndexName = "([^"]+)"')]
-    name = [assignments(sh, r'^NAME="([^"]+)"'), assignments(ps1, r'^\$Name = "([^"]+)"')]
-    for found in (registry, git, index, name):
+    for found in (
+        [assignments(sh, r'^NAME="([^"]+)"'), assignments(ps1, r'^\$Name = "([^"]+)"')],
+        [
+            assignments(sh, r'^INSTALLER_URL="([^"]+)"'),
+            [u.replace(".ps1", ".sh") for u in assignments(ps1, r'^\$UvInstallerUrl = "([^"]+)"')],
+        ],
+    ):
         assert found[0] and found[0] == found[1], found
-    assert registry[0][0].startswith("https://gitlab.dynapps.be/api/v4/projects/") and registry[0][0].endswith(
-        "/packages/pypi/simple"
+    assert assignments(sh, r'^NAME="([^"]+)"') == [_brand.NAME]
+    assert 'uv tool install --reinstall "$requirement"' in sh and '"$NAME==$version"' in sh
+    assert '"tool", "install", "--reinstall", $Requirement' in ps1 and '"$Name==$Version"' in ps1
+
+
+@pytest.mark.parametrize("path", [INSTALL_SH, INSTALL_PS1], ids=lambda p: p.name)
+def test_the_install_scripts_handle_no_token_no_credential_and_no_other_package_source(path):
+    forbidden = re.compile(
+        r"token|password|passwd|secret|credential|username|private-token|authorization|--index|--extra-index|"
+        r"index-url|UV_INDEX|\bgit\b|git\+",
+        re.IGNORECASE,
     )
-    assert git[0][0] == "https://gitlab.dynapps.be/infra-es/farm-ai/cli.git"
-    assert name[0][0] == _brand.NAME
-    # The person sets DYNFARM_INDEX_*; the scripts and the docs name the same two. uv derives the variables it reads
-    # from the index's name, and only the scripts mention those.
-    for text in (sh, ps1, (ROOT / "README.md").read_text()):
-        assert "DYNFARM_INDEX_USERNAME" in text and "DYNFARM_INDEX_PASSWORD" in text
-    uv_variable = f"UV_INDEX_{index[0][0].upper().replace('-', '_')}_"
-    for text in (sh, ps1):
-        assert uv_variable + "USERNAME" in text and uv_variable + "PASSWORD" in text
-    assert "UV_INDEX" not in (ROOT / "README.md").read_text()
-
-
-def test_the_registry_the_scripts_read_is_the_project_the_pipeline_publishes_to():
-    project_id = re.search(r"/projects/(\d+)/", INSTALL_SH.read_text()).group(1)
-    assert project_id == "4378"
-    readme = (ROOT / "README.md").read_text()
-    assert f"projects/{project_id}/packages/pypi/simple" in readme
-    assert "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi" in "\n".join(ci()["publish"]["script"])
+    assert forbidden.findall(code(path)) == [], f"{path.name} handles a credential or installs from somewhere else"
 
 
 @pytest.mark.parametrize(
-    "path", [INSTALL_SH, INSTALL_PS1, ROOT / ".gitlab-ci.yml", ROOT / "README.md"], ids=lambda p: p.name
+    "path", [INSTALL_SH, INSTALL_PS1, WORKFLOW, ROOT / ".gitlab-ci.yml", ROOT / "README.md"], ids=lambda p: p.name
 )
 def test_no_install_path_puts_a_credential_in_a_url(path):
-    text = path.read_text().replace("gitlab-ci-token", "")  # a user name in a variable is not a credential in a URL
-    assert CREDENTIAL_IN_URL.findall(text) == []
+    assert CREDENTIAL_IN_URL.findall(path.read_text()) == []
 
 
 def test_install_ps1_never_exits_the_callers_terminal_and_checks_what_it_runs():
     text = INSTALL_PS1.read_text()
-    code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
-    assert re.search(r"^\s*exit\b", code, re.MULTILINE) is None  # `throw`: it is often run inside an open terminal
+    assert re.search(r"^\s*exit\b", code(INSTALL_PS1), re.MULTILINE) is None  # `throw`: it is often run in a terminal
     assert '$ErrorActionPreference = "Stop"' in text
-    assert "[string]$Version" in text and "--index" in text and "--reinstall" in text
-    assert "git+$GitUrl@$Tag" in text
+    assert "[string]$Version" in text and "--reinstall" in text
     assert text.count("{") == text.count("}") and text.count("(") == text.count(")")  # a missing brace is not a script
     assert "'$Version' is not a version like 0.1.0" in text
 
@@ -270,32 +378,29 @@ def test_install_sh_is_valid_posix_shell():
 
 
 class Machine:
-    """A machine where `uv`, `git` and `curl` are scripts that write down what they were asked, and nothing else exists.
+    """A machine where `uv` and `curl` are scripts that write down what they were asked, and nothing else exists.
 
     The PATH holds only these and symlinks to the few system tools install.sh uses, so a real `uv` on the developer's
-    machine cannot answer instead of the fake one.
+    machine cannot answer instead of the fake one, and a `git` would not be found: the script must not need it.
     """
 
     TOOLS = ("sh", "sed", "grep", "mktemp", "rm", "cat", "mkdir", "cp", "chmod", "env", "tr")
 
-    def __init__(self, tmp_path: Path, *, with_uv: bool = True, tags: str = "") -> None:
+    def __init__(self, tmp_path: Path, *, with_uv: bool = True) -> None:
         self.home = tmp_path / "home"
         self.bin = tmp_path / "fakebin"
         self.system = tmp_path / "system"
         self.tool_bin = tmp_path / "toolbin"  # where `uv tool dir --bin` says tools go; not on PATH
         self.log = tmp_path / "calls.log"
-        self.tags = tmp_path / "tags.txt"
         for directory in (self.home, self.bin, self.system, self.tool_bin):
             directory.mkdir()
         self.log.write_text("")
-        self.tags.write_text(tags)
         for tool in self.TOOLS:
             (self.system / tool).symlink_to(shutil.which(tool))
         self.uv_script = self._script(
             "uv-source",
             """
             echo "uv $*" >> "$FAKE_LOG"
-            echo "uv-env $(env | grep '^UV_INDEX_' | sed 's/=.*//' | tr '\\n' ' ')" >> "$FAKE_LOG"
             if [ "$1 $2 $3" = "tool dir --bin" ]; then echo "$FAKE_TOOL_BIN"; fi
             [ -z "${FAKE_UV_FAILS:-}" ] || exit 1
             """,
@@ -303,18 +408,6 @@ class Machine:
         )
         if with_uv:
             shutil.copy(self.uv_script, self.bin / "uv")
-        self._script(
-            "git",
-            """
-            echo "git $*" >> "$FAKE_LOG"
-            [ -z "${FAKE_GIT_FAILS:-}" ] || exit 128
-            for last; do :; done
-            case "$last" in
-                refs/tags/*) grep -q "refs/tags/${last#refs/tags/}\\$" "$FAKE_TAGS" || exit 2 ;;
-                *) cat "$FAKE_TAGS" ;;
-            esac
-            """,
-        )
         self._script(
             "curl",
             """
@@ -325,14 +418,7 @@ class Machine:
                 'chmod +x "$HOME/.local/bin/uv"' > "$out"
             """,
         )
-        self._script(
-            "dynfarm",
-            """
-            echo "dynfarm-env $(env | grep '^UV_INDEX_' | sed 's/=.*//' | tr '\\n' ' ')" >> "$FAKE_LOG"
-            echo "dynfarm 0.1.0"
-            """,
-            directory=self.tool_bin,
-        )
+        self._script("dynfarm", 'echo "dynfarm 0.1.0"', directory=self.tool_bin)
 
     def _script(self, name: str, body: str, *, install: bool = True, directory: Path | None = None) -> Path:
         directory = directory or (self.bin if install else self.bin.parent)
@@ -346,7 +432,6 @@ class Machine:
             "PATH": f"{self.bin}{os.pathsep}{self.system}",
             "HOME": str(self.home),
             "FAKE_LOG": str(self.log),
-            "FAKE_TAGS": str(self.tags),
             "FAKE_TOOL_BIN": str(self.tool_bin),
             "FAKE_UV_SOURCE": str(self.uv_script),
             **(extra_env or {}),
@@ -355,112 +440,44 @@ class Machine:
 
     @property
     def calls(self) -> list[str]:
-        return [line for line in self.log.read_text().splitlines() if not line.startswith(("uv-env", "dynfarm-env"))]
+        return self.log.read_text().splitlines()
 
     @property
     def uv_calls(self) -> list[str]:
         return [line for line in self.calls if line.startswith("uv ")]
 
-    @property
-    def uv_credential_variables(self) -> str:
-        return " ".join(line for line in self.log.read_text().splitlines() if line.startswith("uv-env"))
 
-    @property
-    def installed_command_credential_variables(self) -> str:
-        """The `UV_INDEX_*` names the installed `dynfarm` (run by the script's final check) found in its environment."""
-        return " ".join(line for line in self.log.read_text().splitlines() if line.startswith("dynfarm-env"))
-
-
-REGISTRY_URL = assignments(INSTALL_SH.read_text(), r'^REGISTRY_URL="([^"]+)"')[0]
-GIT_URL = assignments(INSTALL_SH.read_text(), r'^GIT_URL="([^"]+)"')[0]
-REGISTRY_ENV = {"DYNFARM_INDEX_USERNAME": "alice", "DYNFARM_INDEX_PASSWORD": FAKE_TOKEN}
-TAGS = "c1\trefs/tags/v0.2.0rc1\nc2\trefs/tags/v0.1.1\nc3\trefs/tags/v0.1.0\n"
-
-
-def test_with_registry_credentials_uv_gets_the_index_by_name_and_the_token_only_in_its_environment(tmp_path):
+def test_without_a_version_it_installs_the_latest_dynfarm_from_pypi_and_runs_the_check(tmp_path):
     machine = Machine(tmp_path)
-    run = machine.run("0.1.0", extra_env=REGISTRY_ENV)
+    run = machine.run()
     assert run.returncode == 0, run.stderr
-    assert machine.uv_calls[0] == f"uv tool install --reinstall --index dynfarm={REGISTRY_URL} dynfarm==0.1.0"
-    assert not any(call.startswith("git ") for call in machine.calls), "the registry path must not need git"
-    assert FAKE_TOKEN not in machine.log.read_text() + run.stdout + run.stderr
-    assert "UV_INDEX_DYNFARM_USERNAME" in machine.uv_credential_variables  # uv sees them, as the variables it reads
-    assert "UV_INDEX_DYNFARM_PASSWORD" in machine.uv_credential_variables
-    assert machine.installed_command_credential_variables.strip() == "dynfarm-env"  # nothing else the script runs
+    assert machine.uv_calls[0] == "uv tool install --reinstall dynfarm"
+    assert "from PyPI" in run.stdout
     assert run.stdout.strip().splitlines()[-3:-1] == ["dynfarm 0.1.0", ""]  # the check ran the installed command
 
 
-def test_the_uv_credential_variables_are_not_read_from_the_callers_environment(tmp_path):
-    machine = Machine(tmp_path, tags=TAGS)
-    uv_names = {"UV_INDEX_DYNFARM_USERNAME": "alice", "UV_INDEX_DYNFARM_PASSWORD": FAKE_TOKEN}
-    run = machine.run(extra_env=uv_names)
-    assert run.returncode == 0, run.stderr
-    assert "--index" not in machine.uv_calls[0] and f"git+{GIT_URL}@v0.1.1" in machine.uv_calls[0]
-
-
-def test_the_scripts_never_export_the_uv_credential_variables_to_the_persons_shell():
-    sh, ps1 = INSTALL_SH.read_text(), INSTALL_PS1.read_text()
-    code_sh = "\n".join(line for line in sh.splitlines() if not line.lstrip().startswith("#"))
-    assert "export UV_INDEX" not in code_sh
-    assert re.search(r"^\s*UV_INDEX_DYNFARM_USERNAME=.*UV_INDEX_DYNFARM_PASSWORD=.*\\$", code_sh, re.MULTILINE)
-    # PowerShell has no per-command environment: they are set around the uv call and put back in a `finally`.
-    assert re.search(
-        r"finally \{[^}]*\$env:UV_INDEX_DYNFARM_USERNAME = \$Saved[^}]*\$env:UV_INDEX_DYNFARM_PASSWORD", ps1
-    )
-
-
-def test_without_a_version_the_registry_path_installs_the_latest(tmp_path):
-    machine = Machine(tmp_path)
-    assert machine.run(extra_env=REGISTRY_ENV).returncode == 0
-    assert machine.uv_calls[0].endswith(f"--index dynfarm={REGISTRY_URL} dynfarm")
-
-
-def test_with_half_of_the_registry_credentials_it_falls_back_to_git_instead_of_failing_late(tmp_path):
-    machine = Machine(tmp_path, tags=TAGS)
-    assert machine.run(extra_env={"DYNFARM_INDEX_USERNAME": "alice"}).returncode == 0
-    assert "--index" not in machine.uv_calls[0] and f"git+{GIT_URL}@v0.1.1" in machine.uv_calls[0]
-
-
-def test_without_credentials_it_installs_the_newest_final_release_from_git_never_a_prerelease(tmp_path):
-    machine = Machine(tmp_path, tags=TAGS)
-    run = machine.run()
-    assert run.returncode == 0, run.stderr
-    assert machine.uv_calls[0] == f"uv tool install --reinstall git+{GIT_URL}@v0.1.1"
-    assert any("ls-remote" in call and "--sort=-v:refname" in call for call in machine.calls)
-
-
 @pytest.mark.parametrize("given", ["0.1.0", "v0.1.0"])
-def test_a_version_with_or_without_the_v_installs_that_tag_from_git(tmp_path, given):
-    machine = Machine(tmp_path, tags=TAGS)
+def test_a_version_with_or_without_the_v_pins_the_requirement(tmp_path, given):
+    machine = Machine(tmp_path)
     assert machine.run(given).returncode == 0
-    assert machine.uv_calls[0] == f"uv tool install --reinstall git+{GIT_URL}@v0.1.0"
+    assert machine.uv_calls[0] == "uv tool install --reinstall dynfarm==0.1.0"
 
 
-def test_a_tag_that_does_not_exist_stops_before_uv_is_asked_to_install_anything(tmp_path):
-    machine = Machine(tmp_path, tags=TAGS)
-    run = machine.run("7.7.7")
-    assert run.returncode == 1 and "v7.7.7" in run.stderr
-    assert machine.uv_calls == []
-
-
-def test_git_that_cannot_read_the_project_says_how_to_sign_in_and_installs_nothing(tmp_path):
-    machine = Machine(tmp_path, tags=TAGS)
-    run = machine.run(extra_env={"FAKE_GIT_FAILS": "1"})
-    assert run.returncode == 1 and "sign in" in run.stderr
-    assert machine.uv_calls == []
-
-
-def test_a_project_with_no_final_release_yet_is_an_error_not_an_install_of_nothing(tmp_path):
-    machine = Machine(tmp_path, tags="c1\trefs/tags/v0.1.0rc1\n")
-    run = machine.run()
-    assert run.returncode == 1 and "no release tag" in run.stderr
-    assert machine.uv_calls == []
+def test_a_token_in_the_environment_does_not_change_what_is_installed_or_where_from(tmp_path):
+    machine = Machine(tmp_path)
+    run = machine.run("0.1.0", extra_env={"DYNFARM_TOKEN": FAKE_TOKEN, "UV_INDEX_DYNFARM_PASSWORD": FAKE_TOKEN})
+    assert run.returncode == 0, run.stderr
+    assert machine.uv_calls == ["uv tool install --reinstall dynfarm==0.1.0", "uv tool dir --bin"]
+    assert FAKE_TOKEN not in machine.log.read_text() + run.stdout + run.stderr
+    assert not any(call.startswith("git ") for call in machine.calls), (
+        "there is no git on this machine, and none is used"
+    )
 
 
 @pytest.mark.parametrize("bad", ["x;rm -rf ~", "$(id)", "0.1.0 --index evil=http://x", "v", "latest", "../0.1"])
 def test_a_version_that_is_not_a_version_is_refused_before_anything_runs(tmp_path, bad):
-    machine = Machine(tmp_path, tags=TAGS)
-    run = machine.run(bad, extra_env=REGISTRY_ENV)
+    machine = Machine(tmp_path)
+    run = machine.run(bad)
     assert run.returncode == 1 and "not a version" in run.stderr
     assert machine.calls == []
 
@@ -477,12 +494,12 @@ def test_two_versions_or_an_unknown_option_are_refused(tmp_path):
 def test_help_prints_the_usage_and_changes_nothing(tmp_path):
     machine = Machine(tmp_path)
     run = machine.run("--help")
-    assert run.returncode == 0 and "Usage: sh install.sh [VERSION]" in run.stdout
+    assert run.returncode == 0 and "Usage: sh install.sh [VERSION]" in run.stdout and "PyPI" in run.stdout
     assert machine.calls == []
 
 
 def test_a_missing_uv_is_installed_from_astral_first_and_then_used(tmp_path):
-    machine = Machine(tmp_path, with_uv=False, tags=TAGS)
+    machine = Machine(tmp_path, with_uv=False)
     run = machine.run()
     assert run.returncode == 0, run.stderr
     curl = next(call for call in machine.calls if call.startswith("curl "))
@@ -492,21 +509,21 @@ def test_a_missing_uv_is_installed_from_astral_first_and_then_used(tmp_path):
 
 
 def test_a_failed_uv_download_stops_the_install_and_says_so(tmp_path):
-    machine = Machine(tmp_path, with_uv=False, tags=TAGS)
+    machine = Machine(tmp_path, with_uv=False)
     run = machine.run(extra_env={"FAKE_CURL_FAILS": "1"})
     assert run.returncode == 1 and "uv installer" in run.stderr
     assert machine.uv_calls == []
 
 
 def test_a_failed_uv_install_is_reported_and_is_not_followed_by_a_success_message(tmp_path):
-    machine = Machine(tmp_path, tags=TAGS)
-    run = machine.run(extra_env={**REGISTRY_ENV, "FAKE_UV_FAILS": "1"})
-    assert run.returncode == 1 and "check the user name and the token" in run.stderr
-    assert "Next:" not in run.stdout and FAKE_TOKEN not in run.stdout + run.stderr
+    machine = Machine(tmp_path)
+    run = machine.run("9.9.9", extra_env={"FAKE_UV_FAILS": "1"})
+    assert run.returncode == 1 and "dynfarm==9.9.9 from PyPI" in run.stderr
+    assert "Next:" not in run.stdout
 
 
 def test_when_the_tool_directory_is_not_on_the_path_it_says_how_to_fix_it_and_still_runs_the_check(tmp_path):
-    machine = Machine(tmp_path, tags=TAGS)
+    machine = Machine(tmp_path)
     run = machine.run()
     assert "uv tool update-shell" in run.stdout and "dynfarm 0.1.0" in run.stdout
 
@@ -574,9 +591,13 @@ def test_the_wheel_is_named_for_the_version_and_carries_the_brand_the_commands_a
     assert "[console_scripts]" in entry_points and f"{_brand.NAME} = dynfarm.cli:main" in entry_points
     assert f"Version: {dynfarm.__version__}" in metadata and "Requires-Python: >=3.11" in metadata
     assert "Requires-Dist: click==" in metadata  # the exact pins travel with the package
+    assert "Project-URL: Source, https://github.com/dynapps-es/dynfarm" in metadata and PRIVATE_NAMES[0] not in metadata
 
 
 # -- the documentation ---------------------------------------------------------------------------------------------
+
+
+RAW = "https://raw.githubusercontent.com/dynapps-es/dynfarm/main"
 
 
 def readme() -> str:
@@ -599,7 +620,7 @@ def test_the_readme_lists_every_exit_code_a_script_can_see():
 def test_the_readme_lists_every_environment_variable_the_code_reads():
     sources = "\n".join(path.read_text() for path in (ROOT / "src" / "dynfarm").rglob("*.py"))
     names = {_brand.env(suffix) for suffix in re.findall(r'\benv\("([A-Z_]+)"\)', sources)}
-    names |= {"NO_COLOR", "CI", "DYNFARM_INDEX_USERNAME", "DYNFARM_INDEX_PASSWORD"}
+    names |= {"NO_COLOR", "CI"}
     assert {"DYNFARM_HOST", "DYNFARM_TOKEN", "DYNFARM_CONFIG_DIR", "DYNFARM_DEBUG"} <= names
     section = readme().split("### Environment variables", 1)[1].split("###", 1)[0]
     missing = sorted(name for name in names if f"`{name}`" not in section)
@@ -609,24 +630,105 @@ def test_the_readme_lists_every_environment_variable_the_code_reads():
 def test_the_readme_has_the_way_in_the_way_out_and_the_ci_recipe():
     text = readme()
     for needle in (
-        "sh cli/install.sh",
-        ".\\cli\\install.ps1",
-        "uv tool install",
-        "pipx install",
+        "uv tool install dynfarm",
+        "pipx install dynfarm",
+        "pip install dynfarm",
+        f"curl -LsSf {RAW}/install.sh | sh",
+        'powershell -ExecutionPolicy ByPass -c "irm ' + RAW + '/install.ps1 | iex"',
+        "uv tool upgrade dynfarm",
         "## First steps",
         "### Several farms",
         "## Upgrade and uninstall",
         "uv tool uninstall dynfarm",
         "dynfarm completion",
+        "DYNFARM_HOST",
+        "DYNFARM_TOKEN",
+        "masked",
         "--exit-status",
     ):
         assert needle in text, needle
 
 
+def test_the_readme_is_a_page_pypi_can_render_so_its_links_are_absolute():
+    """PyPI shows the README outside the repository: a relative link such as `CHANGELOG.md` is a 404 there."""
+    links = re.findall(r"\]\(([^)\s]+)\)", readme())
+    assert links, "the README has no links at all: the pattern is not reading it"
+    assert [link for link in links if not link.startswith(("https://", "#"))] == []
+
+
+# -- nothing public points inside --------------------------------------------------------------------------------
+
+#: What must not appear anywhere in the repository, because the whole repository is mirrored to a public site: the
+#: private GitLab host, the internal domain of the farms, the keychain item of an internal client and that client's
+#: file name. Each is written in two pieces so that this file does not contain what it forbids.
+PRIVATE_NAMES = ("gitlab" + ".dynapps.be", "dyncloud" + ".es", "agent-farm" + "-token", "farm" + ".py")
+
+#: The one place a private name is allowed, and why: the pinned copy of the farm's own OpenAPI document keeps the
+#: git host that the farm's documentation uses as an example. It is the farm's text, refreshed byte for byte from the
+#: API (`tools/fetch_openapi.py`), so editing it here would be undone by the next refresh and would make the parity
+#: test compare a document that is not the API's. The other three names are still checked in it.
+ALLOWED_PRIVATE_NAMES = {("tests/fixtures/openapi.json", PRIVATE_NAMES[0])}
+
+
+def tracked_files() -> list[str]:
+    """Files git would publish: tracked, plus new ones not ignored (so a file added in this change is checked before
+    it is committed). Skips when this is not a git checkout (an unpacked sdist)."""
+    if shutil.which("git") is None or not (ROOT / ".git").exists():
+        pytest.skip("not a git checkout: nothing to list")
+    run = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        check=True,
+    )
+    return [name for name in run.stdout.splitlines() if (ROOT / name).is_file()]
+
+
+def private_names_in(name: str, text: str) -> list[str]:
+    return [found for found in PRIVATE_NAMES if found in text and (name, found) not in ALLOWED_PRIVATE_NAMES]
+
+
+def test_no_file_of_the_repository_names_a_private_host_or_an_internal_client():
+    names = tracked_files()
+    assert len(names) > 50 and "README.md" in names, "the listing is not the repository"
+    found = {}
+    for name in names:
+        text = (ROOT / name).read_text(encoding="utf-8", errors="ignore")
+        if hits := private_names_in(name, text):
+            found[name] = hits
+    assert found == {}, f"private names in files that will be public: {found}"
+
+
+def test_the_private_names_scan_can_fail_and_its_one_exemption_is_narrow():
+    for private in PRIVATE_NAMES:
+        assert private_names_in("README.md", f"see {private} for more") == [private]
+    exempt, host = next(iter(ALLOWED_PRIVATE_NAMES))
+    assert private_names_in(exempt, f"https://{host}/x") == []
+    assert private_names_in(exempt, f"{PRIVATE_NAMES[1]} and {PRIVATE_NAMES[2]}") == [
+        PRIVATE_NAMES[1],
+        PRIVATE_NAMES[2],
+    ]
+    assert private_names_in("src/dynfarm/cli.py", f"https://{host}/x") == [host]
+    # The exemption is real: the fixture does carry the host, so removing the entry would turn the scan red.
+    assert host in (ROOT / exempt).read_text()
+
+
+def test_the_project_links_on_pypi_point_to_the_github_mirror():
+    urls = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["urls"]
+    assert urls == {
+        "Homepage": "https://github.com/dynapps-es/dynfarm",
+        "Source": "https://github.com/dynapps-es/dynfarm",
+        "Changelog": "https://github.com/dynapps-es/dynfarm/blob/main/CHANGELOG.md",
+        "Issues": "https://github.com/dynapps-es/dynfarm/issues",
+    }
+    assert tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["keywords"]
+
+
 def test_the_code_and_the_docs_carry_no_reference_to_the_plan_that_built_them():
     scanned = [ROOT / name for name in ("README.md", "CONTRIBUTING.md", "CHANGELOG.md", "install.sh", "install.ps1")]
     scanned += sorted((ROOT / "src").rglob("*.py")) + sorted((ROOT / "tests").rglob("*.py"))
-    scanned += sorted((ROOT / "tools").glob("*.py")) + [ROOT / ".gitlab-ci.yml"]
+    scanned += sorted((ROOT / "tools").glob("*.py")) + [ROOT / ".gitlab-ci.yml", WORKFLOW]
     plan_reference = re.compile(r"\b(?:D\d{1,2}|[Pp]hase \d+|research Q\d)\b")
     this_file = Path(__file__).resolve()
     for path in scanned:

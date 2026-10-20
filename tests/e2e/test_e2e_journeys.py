@@ -40,7 +40,7 @@ def test_a_person_logs_in_asks_who_they_are_and_logs_out(dynfarm, fake_farm):
 
     whoami = dynfarm.run("whoami", "--json")
     assert whoami.code == 0, whoami.output
-    assert whoami.json()["subject"] == "alice" and whoami.json()["tenant"] == "dynapps-internal"
+    assert whoami.json()["subject"] == "alice" and whoami.json()["tenant"] == "tenant-a"
     status = dynfarm.run("auth", "status")
     assert status.code == 0 and "logged in as alice" in status.stdout and ALICE not in status.output
 
@@ -72,7 +72,7 @@ def test_the_token_of_the_environment_works_without_a_login_and_is_never_written
 
 def test_the_catalogue_commands_answer_with_what_the_farm_has(logged_in):
     plugins = logged_in.run("plugin", "list", "--json")
-    assert plugins.code == 0 and {p["name"] for p in plugins.json()["items"]} >= {"developer-skills"}
+    assert plugins.code == 0 and {p["name"] for p in plugins.json()["items"]} >= {"example-plugin"}
     key = logged_in.run("callback-key")
     assert key.code == 0 and key.json()["keys"]
 

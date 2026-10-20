@@ -7,10 +7,6 @@ is this constant plus that one key in `pyproject.toml`.
 
 Every environment variable the tool reads carries that prefix; the only others it ever looks at are the standard
 conventions that are not ours (`CI`, `NO_COLOR`, `TERM`, `XDG_*`, the proxy variables httpx reads), which a test lists.
-
-The `LEGACY_*` names are those of `farm.py`, the client of the `farm-skills` Claude Code plugin. They are not
-environment variables (those are not read): they name the keyring entry `farm.py` keeps its key in and the one farm
-`farm.py` talks to, so that `auth login` can offer that key for that farm and for no other.
 """
 
 from __future__ import annotations
@@ -26,12 +22,6 @@ ENV_PREFIX = NAME.upper().replace("-", "_") + "_"
 
 #: Service name under which tokens are kept in the OS keyring; the account is the farm's URL.
 KEYRING_SERVICE = NAME
-
-#: Keychain service where `farm.py` tells people to keep their key (one key, no host).
-LEGACY_KEYRING_SERVICE = "agent-farm-token"
-#: `farm.py`'s built-in farm. Used ONLY to tell which farm the `agent-farm-token` keyring entry belongs to; it is not
-#: a default farm of this tool (there is none).
-LEGACY_DEFAULT_HOST = "https://farm-dev.ai.dyncloud.es"
 
 
 def env(suffix: str) -> str:

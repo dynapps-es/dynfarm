@@ -26,7 +26,7 @@ def fields(result) -> dict[str, str]:
 def test_whoami_shows_subject_tenant_scopes_and_expiry(run_cli):
     shown = fields(run_cli(["whoami"]))
     assert shown["subject"] == "alice"
-    assert shown["tenant"] == "dynapps-internal"
+    assert shown["tenant"] == "tenant-a"
     assert "farm:tasks:read" in shown["scopes"] and "farm:credentials:write" in shown["scopes"]
     assert shown["tenant admin"] == "no"
     assert shown["free prompt"] == "yes"
@@ -36,10 +36,10 @@ def test_whoami_shows_subject_tenant_scopes_and_expiry(run_cli):
 def test_whoami_tells_two_tenants_and_two_people_apart(run_cli):
     seen = {token: fields(run_cli(["whoami"], token=token)) for token in (ALICE, BOB, OTHER, ADMIN)}
     assert [(s["subject"], s["tenant"]) for s in seen.values()] == [
-        ("alice", "dynapps-internal"),
-        ("bob", "dynapps-internal"),
+        ("alice", "tenant-a"),
+        ("bob", "tenant-a"),
         ("carol", "acme"),
-        ("dana", "dynapps-internal"),
+        ("dana", "tenant-a"),
     ]
     assert seen[ADMIN]["tenant admin"] == "yes" and seen[ALICE]["tenant admin"] == "no"
     assert "farm:tenant:admin" in seen[ADMIN]["scopes"]
@@ -111,8 +111,8 @@ def test_plugin_list_prints_one_row_per_plugin_with_its_agents(run_cli):
     assert result.exit_code == 0, result.output
     rows = [line.split("\t") for line in result.stdout.splitlines()]
     assert rows == [
-        ["developer-skills", "1.4.0", "0a1b2c3d", "developer-skills:code-reviewer"],
-        ["common-skills", "2.0.1", "", ""],
+        ["example-plugin", "1.4.0", "0a1b2c3d", "example-plugin:code-reviewer"],
+        ["other-plugin", "2.0.1", "", ""],
     ]
 
 
@@ -128,8 +128,8 @@ def test_plugin_list_draws_a_table_with_headers_on_a_terminal(run_cli, monkeypat
     monkeypatch.setenv("NO_COLOR", "1")
     lines = run_cli(["plugin", "list"]).stdout.splitlines()
     assert lines[0].split() == ["NAME", "VERSION", "COMMIT", "AGENTS"]
-    assert lines[1].split() == ["developer-skills", "1.4.0", "0a1b2c3d", "developer-skills:code-reviewer"]
-    assert lines[2].split() == ["common-skills", "2.0.1", "-", "-"]
+    assert lines[1].split() == ["example-plugin", "1.4.0", "0a1b2c3d", "example-plugin:code-reviewer"]
+    assert lines[2].split() == ["other-plugin", "2.0.1", "-", "-"]
 
 
 def test_plugin_list_needs_a_valid_token(run_cli):

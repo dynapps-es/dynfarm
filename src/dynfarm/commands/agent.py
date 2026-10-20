@@ -80,7 +80,7 @@ def agent_body_options(fn: Any) -> Any:
         click.option(
             "--plugin-agent",
             metavar="PLUGIN:AGENT",
-            help="Build on an agent of a plugin (see `dynfarm plugin list`), e.g. developer-skills:code-reviewer.",
+            help="Build on an agent of a plugin (see `dynfarm plugin list`), e.g. my-plugin:code-reviewer.",
         ),
         click.option(
             "--requires-workspace/--no-requires-workspace",
@@ -228,7 +228,7 @@ def create(client: FarmClient, slug: str, scope: str | None, json_flag: bool, **
 
     \b
     dynfarm agent create web-manager --scope personal --instructions-file web-manager.md
-    dynfarm agent create reviewer --scope team --plugin-agent developer-skills:code-reviewer --requires-workspace
+    dynfarm agent create reviewer --scope team --plugin-agent my-plugin:code-reviewer --requires-workspace
     dynfarm agent create etl --scope personal --from-file etl.json      # credentials, mcp_servers, limits...
     """
     body = build_agent_body(**fields)
