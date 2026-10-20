@@ -871,10 +871,18 @@ class FakeFarm:
         return 201, self._agent_out(row)
 
     def _agent_target(self, call: Call) -> dict[str, Any]:
-        scope = call.query.get("scope") or "personal"
-        row = self._find_agent(call.principal, call.path["slug"], scope)
-        if row is None or row["scope"] == "platform":
-            raise ApiProblem(404, "agent_not_found", f"no {scope} agent '{call.path['slug']}'")
+        """The agent a PATCH or DELETE means: `?scope=` picks one, else the personal one then the team's, as the farm
+        resolves a slug (`farm-api.md` §7.6). A platform agent is read-only (403), a team one needs a tenant admin."""
+        slug, scope = call.path["slug"], call.query.get("scope")
+        row = None
+        for candidate in (scope,) if scope else ("personal", "team", "platform"):
+            row = self._find_agent(call.principal, slug, candidate)
+            if row is not None:
+                break
+        if row is None:
+            raise ApiProblem(404, "agent_not_found", f"no {scope + ' ' if scope else ''}agent '{slug}'")
+        if row["scope"] == "platform":
+            raise ApiProblem(403, "agent_read_only", f"'{slug}' is a platform agent and cannot be changed")
         if row["scope"] == "team" and not call.principal.is_admin:
             raise ApiProblem(
                 403,

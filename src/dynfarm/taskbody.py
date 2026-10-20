@@ -31,16 +31,14 @@ fields, never the text itself: a prompt may hold what the person did not mean to
 from __future__ import annotations
 
 import functools
-import json
-import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, TypeVar
 
 import click
 
 from dynfarm.errors import ConfigError
+from dynfarm.inputs import read_json_object, read_text
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -142,7 +140,7 @@ def build_task_body(flags: TaskFlags, *, agent: str | None = None) -> dict[str, 
     if len(readers) > 1:
         raise ConfigError(f"only one of {', '.join(readers)} can read standard input")
 
-    body = _read_body_file(flags.body_file) if flags.body_file else {}
+    body = read_json_object(flags.body_file, "--body-file", "a task") if flags.body_file else {}
     if agent is not None:
         body["agent_id"] = agent
     for field, text, file, flag, file_flag in (
@@ -152,7 +150,7 @@ def build_task_body(flags: TaskFlags, *, agent: str | None = None) -> dict[str, 
         if text is not None and file is not None:
             raise ConfigError(f"give {flag} or {file_flag}, not both")
         if file is not None:
-            text = _read_text(file, file_flag)
+            text = read_text(file, file_flag)
         if text is not None:
             if not text.strip():
                 raise ConfigError(f"the {field} is empty")
@@ -176,30 +174,3 @@ def build_task_body(flags: TaskFlags, *, agent: str | None = None) -> dict[str, 
 def stores_text(body: dict[str, Any]) -> bool:
     """Whether the body sends text the farm will keep (a prompt or an input), so the person is told once."""
     return bool(body.get("prompt") or body.get("input"))
-
-
-# -- internals ----------------------------------------------------------------------------------------------------
-
-
-def _read_text(source: str, flag: str) -> str:
-    """The text of a file (or of standard input for `-`), without the newline an editor or a heredoc adds at its end."""
-    try:
-        # `sys.stdin`, not `click.get_text_stream`, which click 8.5 deprecates.
-        text = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        raise ConfigError(
-            f"cannot read {flag} {source}: {getattr(exc, 'strerror', None) or 'not UTF-8 text'}"
-        ) from None
-    return text.rstrip("\r\n")
-
-
-def _read_body_file(source: str) -> dict[str, Any]:
-    text = _read_text(source, "--body-file")
-    try:
-        body = json.loads(text)
-    except json.JSONDecodeError as exc:
-        # Position only: the message quotes nothing, and the file may hold a prompt.
-        raise ConfigError(f"--body-file {source} is not valid JSON ({exc.msg} at line {exc.lineno})") from None
-    if not isinstance(body, dict):
-        raise ConfigError(f"--body-file {source} must hold a JSON object (a task), not {type(body).__name__}")
-    return body

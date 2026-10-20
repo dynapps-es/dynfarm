@@ -50,6 +50,11 @@ def use_color(stream: IO[str]) -> bool:
     return _is_tty(stream) and os.environ.get("TERM") != "dumb"
 
 
+def stdout_is_terminal() -> bool:
+    """Whether standard output is a terminal: a command adds a line for a person (a count) only then, not in a pipe."""
+    return _is_tty(sys.stdout)
+
+
 def emit(
     data: Any,
     *,

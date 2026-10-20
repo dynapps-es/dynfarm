@@ -295,6 +295,23 @@ def test_an_agent_a_live_schedule_launches_cannot_be_deleted(fake_farm):
     assert error_code(call(fake_farm, "DELETE", "/agents/mine")) == "agent_in_use_by_schedule"
 
 
+def test_a_patch_or_delete_without_scope_means_the_personal_agent_then_the_team_one_and_never_a_platform_one(fake_farm):
+    call(fake_farm, "POST", "/agents", ADMIN, json={"slug": "shared", "scope": "team", "description": "team"})
+    assert call(fake_farm, "PATCH", "/agents/shared", json={"description": "x"}).status_code == 403
+    assert call(fake_farm, "PATCH", "/agents/shared", ADMIN, json={"description": "x"}).status_code == 200
+    # A person's own personal agent wins over a team agent of the same slug until ?scope=team says otherwise.
+    call(fake_farm, "POST", "/agents", json={"slug": "dup", "scope": "personal", "description": "mine"})
+    call(fake_farm, "POST", "/agents", ADMIN, json={"slug": "dup", "scope": "team", "description": "team"})
+    assert call(fake_farm, "PATCH", "/agents/dup", json={"description": "p"}).json()["scope"] == "personal"
+    assert (
+        call(fake_farm, "PATCH", "/agents/dup", params={"scope": "team"}, json={"description": "t"}).status_code == 403
+    )
+    team = call(fake_farm, "PATCH", "/agents/dup", ADMIN, params={"scope": "team"}, json={"description": "t"})
+    assert team.json()["scope"] == "team"
+    read_only = call(fake_farm, "DELETE", "/agents/repo-helper", ADMIN)
+    assert (read_only.status_code, error_code(read_only)) == (403, "agent_read_only")
+
+
 # -- schedules --------------------------------------------------------------------------------------------------
 
 

@@ -93,6 +93,39 @@ dynfarm task cancel last                                  # asks first; --yes in
 - **A task, schedule or credential that is somebody else's is a 404**, as everywhere in the farm: if `view` says "not
   found" for an id you were given, it belongs to another person or tenant (`dynfarm whoami` says who you are).
 
+## Agents
+
+An agent is a name you launch tasks with (`dynfarm task run NAME`): the farm's own (`platform`, read-only), your
+team's (`team`, shared by the whole tenant, written only by a tenant admin) or yours alone (`personal`). You write
+the last two.
+
+```bash
+dynfarm agent list                                  # slug, scope, owner, description; --scope, --owner me, --json
+dynfarm agent view web-manager                      # instructions, what it may touch (credentials, egress), limits
+dynfarm agent create web-manager --scope personal --instructions-file web-manager.md --description "Keeps the site up"
+dynfarm agent create reviewer --scope team --plugin-agent developer-skills:code-reviewer --requires-workspace
+dynfarm agent create etl --scope personal --from-file etl.json     # credentials, mcp_servers, egress, limits...
+dynfarm agent edit web-manager --description "Keeps the site up to date"
+echo '{"instructions": null}' | dynfarm agent edit web-manager --from-file -     # null clears a field
+dynfarm agent delete web-manager                    # asks first; --yes in scripts
+```
+
+- **`create` needs `--scope personal|team`** (or `scope` in the file): a team agent is launched by everybody in the
+  tenant, so the tool never picks it for you.
+- **Flags cover the common fields; the rest goes in a file.** `--description`, `--instructions` /
+  `--instructions-file`, `--plugin-agent` and `--requires-workspace` are flags. `mcp_servers`, `credentials`,
+  `env_credentials`, `egress`, `limits`, `image`, `services`, `resources`, `sandbox`, `profile` and `work_size` go in
+  `--from-file FILE` (`-` for standard input), an agent as JSON; a flag overrides the same field of the file.
+  `--instructions-file` reads long or multi-line text from a file or from standard input.
+- **`edit` sends only what you gave**, so nothing else changes. `slug` and `scope` never change; there `--scope` only
+  says *which* agent when your personal one and your team's share a slug (the personal one is the default, as when a
+  task names the agent). `delete` takes `--scope` for the same reason.
+- **Instructions are stored by the farm, and every person of the tenant can read a team agent's**: keep secrets out of
+  them. An agent that needs a secret names a credential (`credentials`, `env_credentials`) by name in the file.
+- The farm decides who may do what: a platform agent answers `agent_read_only`, a team agent needs a tenant admin
+  (`insufficient_scope`), another person's personal agent is a 404, and a delete is refused while a schedule that has
+  not finished still launches the agent (`agent_in_use_by_schedule`). The error code is printed with the message.
+
 ## Raw API calls
 
 `dynfarm api` calls any endpoint of the farm's API and prints the JSON answer, like `gh api`. The path is relative to
