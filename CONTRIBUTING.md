@@ -135,3 +135,18 @@ patch version. A bad release is not deleted; it is superseded.
 same registry, git address and index name in both, a version they refuse to pass on to a shell). The scripts are
 tested with a fake `uv`, `git` and `curl` for the shell one; `install.ps1` has no runner in CI, so it is checked
 statically, and a change to it needs a run on a real Windows machine before the tag.
+
+## Live smoke
+
+`tools/smoke_live.sh FARM_URL` drives an installed `dynfarm` against a real farm with a real token, through the real
+system keyring and a temporary config dir: login, status, whoami, the read commands, a far-future schedule created,
+paused and deleted, a throw-away credential set and deleted, logout. It cleans up what it created even when a step
+fails, and launches no task. Install the branch in a fresh venv and give it the token by environment, never on the
+command line:
+
+```bash
+python3 -m venv /tmp/dynfarm-smoke && /tmp/dynfarm-smoke/bin/pip install -q "git+file://$PWD@feat/initial-cli"
+DYNFARM_SMOKE_TOKEN="$(security find-generic-password -s agent-farm-token -w)" \
+  DYNFARM_SMOKE_VALUE="smoke-$(openssl rand -hex 12)" PATH="/tmp/dynfarm-smoke/bin:$PATH" \
+  bash tools/smoke_live.sh https://farm-dev.ai.dyncloud.es
+```
