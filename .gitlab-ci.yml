@@ -1,0 +1,54 @@
+# CI of dynfarm. Every push runs lint and the test suite on every supported Python; later stages (end-to-end over a
+# real socket, packaging, API drift, release) are described in CONTRIBUTING.md § "CI".
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    # A branch with an open MR is tested by its MR pipeline; do not run it twice.
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+stages:
+  - lint
+  - test
+
+default:
+  interruptible: true
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+.python:
+  cache:
+    key:
+      files: [pyproject.toml]
+    paths: [.cache/pip]
+  before_script:
+    - python -m venv .venv
+    - .venv/bin/pip install -q -e '.[dev]'
+
+lint:
+  stage: lint
+  image: python:3.13-slim
+  extends: .python
+  script:
+    - .venv/bin/ruff check .
+    - .venv/bin/ruff format --check .
+
+test:
+  stage: test
+  image: python:${PYTHON_VERSION}-slim
+  extends: .python
+  parallel:
+    matrix:
+      - PYTHON_VERSION: ["3.11", "3.12", "3.13", "3.14"]
+  script:
+    - .venv/bin/python -m pytest -q --junitxml=report.xml
+  artifacts:
+    when: always
+    reports:
+      junit: report.xml
