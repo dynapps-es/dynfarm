@@ -27,7 +27,7 @@ from dynfarm.context import AppContext
 @pytest.fixture(autouse=True)
 def _clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in list(os.environ):
-        if name.startswith((_brand.ENV_PREFIX, "AGENT_FARM_")) or name in ("NO_COLOR", "TERM"):
+        if name.startswith(_brand.ENV_PREFIX) or name in ("NO_COLOR", "TERM"):
             monkeypatch.delenv(name)
 
 

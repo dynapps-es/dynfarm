@@ -8,12 +8,12 @@ The rules these commands keep, and why:
 - **A token is never printed**, by any command but `auth token`, whose whole job is to hand it to a script
   (`curl -H "Authorization: Bearer $(dynfarm auth token)"`). `status` names where the token came from (`keyring`,
   `file`, `env:DYNFARM_TOKEN`), never any part of it: even a masked prefix narrows a guess.
-- **`farm.py`'s token stays with `farm.py`'s farm.** `AGENT_FARM_TOKEN` and the `agent-farm-token` keyring entry are
-  used, and offered at `login`, only for the farm `farm.py` talks to (`AGENT_FARM_URL`, else its built-in farm);
-  `DYNFARM_TOKEN` is the variable that answers for any farm.
+- **`farm.py`'s token stays with `farm.py`'s farm.** The `agent-farm-token` keyring entry is offered at `login` only
+  for the farm `farm.py` talks to (its built-in one); `DYNFARM_TOKEN` is the variable that answers for any farm. No
+  variable of `farm.py` is read: every environment variable of the tool is `DYNFARM_*`.
 - **Expired is not invalid.** `status` says "expired — get a new one" for `token_expired` and "invalid" for
   `token_invalid`, because the first is routine (renew) and the second means stop.
-- **There is no default farm**: `login` takes `--hostname`, `DYNFARM_HOST` / `AGENT_FARM_URL`, or asks; the first
+- **There is no default farm**: `login` takes `--hostname`, `DYNFARM_HOST`, or asks; the first
   farm logged in to becomes the default, `switch` changes it.
 - **Logging out does not revoke**: the API has no endpoint for it. The token keeps working until it expires; the
   message says so, so nobody believes a leaked token is dead because they logged out.
@@ -34,7 +34,7 @@ from dynfarm.config import normalize_host, resolve_host
 from dynfarm.context import AppContext
 from dynfarm.errors import AuthRequired, ConfigError, DynfarmError, FarmError, handle
 from dynfarm.registry import operation
-from dynfarm.tokens import TokenStore, env_token, ignored_legacy_token
+from dynfarm.tokens import TokenStore, env_token
 
 HOSTNAME_HELP = "The farm's URL, e.g. https://farm.example.com."
 
@@ -82,7 +82,7 @@ def login(hostname: str | None, with_token: bool, insecure_storage: bool) -> Non
     click.echo(f"Token stored in {where}", err=True)
     if saved.made_default:
         click.echo(f"{host} is now the default farm", err=True)
-    shadow = env_token(store.environ, host)
+    shadow = env_token(store.environ)
     if shadow is not None:
         name = shadow.source.removeprefix("env:")
         click.echo(f"warning: {name} is set and takes precedence over the stored token", err=True)
@@ -93,7 +93,6 @@ def _login_host(flag: str | None, store: TokenStore) -> str:
     for label, value in (
         ("--hostname", flag),
         (_brand.env("HOST"), store.environ.get(_brand.env("HOST"))),
-        (_brand.LEGACY_ENV_HOST, store.environ.get(_brand.LEGACY_ENV_HOST)),
     ):
         if value and value.strip():
             return _normalized(label, value)
@@ -144,13 +143,11 @@ def status(hostname: str | None, json_flag: bool) -> None:
         hosts = [_normalized("--hostname", hostname)]
     else:
         hosts = store.hosts()
-        for label in (_brand.env("HOST"), _brand.LEGACY_ENV_HOST):
-            value = store.environ.get(label, "")
-            if value.strip():
-                env_host = _normalized(label, value)
-                if env_host not in hosts:
-                    hosts.append(env_host)
-                break
+        value = store.environ.get(_brand.env("HOST"), "")
+        if value.strip():
+            env_host = _normalized(_brand.env("HOST"), value)
+            if env_host not in hosts:
+                hosts.append(env_host)
     if not hosts:
         raise AuthRequired(f"not logged in to any farm — run `{_brand.NAME} auth login`")
     report = [_check(store, host, host == default) for host in hosts]
@@ -173,8 +170,6 @@ def _check(store: TokenStore, host: str, is_default: bool) -> dict[str, Any]:
     except ConfigError as exc:
         return {**row, "state": FAILED, "error": {"code": "config_error", "message": exc.message}}
     if resolved is None:
-        if ignored_legacy_token(store.environ, host):
-            row["ignored"] = _brand.LEGACY_ENV_TOKEN
         return row
     row["source"] = resolved.source
     try:
@@ -202,8 +197,6 @@ def _describe(row: dict[str, Any]) -> list[str]:
     lines = [host + (" (default)" if row["default"] else "")]
     state = row["state"]
     if state == LOGGED_OUT:
-        if row.get("ignored"):
-            lines.append(f"  {row['ignored']} is set but belongs to farm.py's farm, not this one")
         return [*lines, f"  not logged in — run `{_brand.NAME} auth login --hostname {host}`"]
     if row["source"]:
         lines.append(f"  token from: {row['source']}")
@@ -268,7 +261,7 @@ def logout(hostname: str | None, yes: bool) -> None:
     click.echo("The token was not revoked: it works until it expires. If it leaked, ask the farm's admin.", err=True)
     if default:
         click.echo(f"The default farm is {default}", err=True)
-    shadow = env_token(store.environ, host)
+    shadow = env_token(store.environ)
     if shadow is not None:
         name = shadow.source.removeprefix("env:")
         click.echo(f"warning: {name} is still set in this environment", err=True)
@@ -288,10 +281,8 @@ def switch(hostname: str) -> None:
         raise ConfigError(f"not logged in to {host} — run `{_brand.NAME} auth login --hostname {host}` first")
     store.set_default(host)
     click.echo(f"{host} is now the default farm", err=True)
-    for label in (_brand.env("HOST"), _brand.LEGACY_ENV_HOST):
-        if store.environ.get(label, "").strip():
-            click.echo(f"warning: {label} is set and overrides the default farm", err=True)
-            break
+    if store.environ.get(_brand.env("HOST"), "").strip():
+        click.echo(f"warning: {_brand.env('HOST')} is set and overrides the default farm", err=True)
 
 
 # -- shared --------------------------------------------------------------------------------------------------------

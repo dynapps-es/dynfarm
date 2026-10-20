@@ -9,7 +9,7 @@ Three things live here because every command needs them before it can make a req
    config dir.
 2. **Host normalisation**: `farm.example.com`, `https://Farm.Example.com/` and `https://farm.example.com/anything`
    are one farm, written one way, so the keyring account, the config table and the comparison all agree.
-3. **Host resolution**: `--hostname` > `DYNFARM_HOST` > `AGENT_FARM_URL` (the alias `farm.py` documents) >
+3. **Host resolution**: `--hostname` > `DYNFARM_HOST` >
    `default_host`. There is no built-in default: the tool serves several farms and a Dynapps URL baked in would be
    wrong for the others. Nothing resolved is a configuration error (exit 2), never a guess.
 
@@ -155,7 +155,7 @@ def save_config(data: Mapping[str, Any], environ: Mapping[str, str] | None = Non
 def resolve_host(flag: str | None = None, *, environ: Mapping[str, str] | None = None) -> str:
     """The normalised farm URL a command talks to, or a `ConfigError` saying how to configure one.
 
-    Precedence: `--hostname`, `DYNFARM_HOST`, `AGENT_FARM_URL`, then `default_host` of the config file. An empty value
+    Precedence: `--hostname`, `DYNFARM_HOST`, then `default_host` of the config file. An empty value
     counts as unset. The config file is read only if nothing before it answered, so a broken file does not stop a
     command that was told its farm explicitly.
     """
@@ -163,7 +163,6 @@ def resolve_host(flag: str | None = None, *, environ: Mapping[str, str] | None =
     explicit = (
         ("--hostname", flag),
         (_brand.env("HOST"), environ.get(_brand.env("HOST"))),
-        (_brand.LEGACY_ENV_HOST, environ.get(_brand.LEGACY_ENV_HOST)),
     )
     for label, value in explicit:
         if value and value.strip():

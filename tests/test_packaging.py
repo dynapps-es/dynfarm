@@ -219,10 +219,14 @@ def test_both_install_scripts_use_the_same_registry_git_address_and_index_name()
     )
     assert git[0][0] == "https://gitlab.dynapps.be/infra-es/farm-ai/cli.git"
     assert name[0][0] == _brand.NAME
-    # uv derives the credential variables from the index's name; the scripts and the docs name the same ones.
-    variable = f"UV_INDEX_{index[0][0].upper().replace('-', '_')}_"
+    # The person sets DYNFARM_INDEX_*; the scripts and the docs name the same two. uv derives the variables it reads
+    # from the index's name, and only the scripts mention those.
     for text in (sh, ps1, (ROOT / "README.md").read_text()):
-        assert variable + "USERNAME" in text and variable + "PASSWORD" in text
+        assert "DYNFARM_INDEX_USERNAME" in text and "DYNFARM_INDEX_PASSWORD" in text
+    uv_variable = f"UV_INDEX_{index[0][0].upper().replace('-', '_')}_"
+    for text in (sh, ps1):
+        assert uv_variable + "USERNAME" in text and uv_variable + "PASSWORD" in text
+    assert "UV_INDEX" not in (ROOT / "README.md").read_text()
 
 
 def test_the_registry_the_scripts_read_is_the_project_the_pipeline_publishes_to():
@@ -321,7 +325,14 @@ class Machine:
                 'chmod +x "$HOME/.local/bin/uv"' > "$out"
             """,
         )
-        self._script("dynfarm", 'echo "dynfarm 0.1.0"', directory=self.tool_bin)
+        self._script(
+            "dynfarm",
+            """
+            echo "dynfarm-env $(env | grep '^UV_INDEX_' | sed 's/=.*//' | tr '\\n' ' ')" >> "$FAKE_LOG"
+            echo "dynfarm 0.1.0"
+            """,
+            directory=self.tool_bin,
+        )
 
     def _script(self, name: str, body: str, *, install: bool = True, directory: Path | None = None) -> Path:
         directory = directory or (self.bin if install else self.bin.parent)
@@ -344,7 +355,7 @@ class Machine:
 
     @property
     def calls(self) -> list[str]:
-        return [line for line in self.log.read_text().splitlines() if not line.startswith("uv-env")]
+        return [line for line in self.log.read_text().splitlines() if not line.startswith(("uv-env", "dynfarm-env"))]
 
     @property
     def uv_calls(self) -> list[str]:
@@ -354,10 +365,15 @@ class Machine:
     def uv_credential_variables(self) -> str:
         return " ".join(line for line in self.log.read_text().splitlines() if line.startswith("uv-env"))
 
+    @property
+    def installed_command_credential_variables(self) -> str:
+        """The `UV_INDEX_*` names the installed `dynfarm` (run by the script's final check) found in its environment."""
+        return " ".join(line for line in self.log.read_text().splitlines() if line.startswith("dynfarm-env"))
+
 
 REGISTRY_URL = assignments(INSTALL_SH.read_text(), r'^REGISTRY_URL="([^"]+)"')[0]
 GIT_URL = assignments(INSTALL_SH.read_text(), r'^GIT_URL="([^"]+)"')[0]
-REGISTRY_ENV = {"UV_INDEX_DYNFARM_USERNAME": "alice", "UV_INDEX_DYNFARM_PASSWORD": FAKE_TOKEN}
+REGISTRY_ENV = {"DYNFARM_INDEX_USERNAME": "alice", "DYNFARM_INDEX_PASSWORD": FAKE_TOKEN}
 TAGS = "c1\trefs/tags/v0.2.0rc1\nc2\trefs/tags/v0.1.1\nc3\trefs/tags/v0.1.0\n"
 
 
@@ -368,8 +384,29 @@ def test_with_registry_credentials_uv_gets_the_index_by_name_and_the_token_only_
     assert machine.uv_calls[0] == f"uv tool install --reinstall --index dynfarm={REGISTRY_URL} dynfarm==0.1.0"
     assert not any(call.startswith("git ") for call in machine.calls), "the registry path must not need git"
     assert FAKE_TOKEN not in machine.log.read_text() + run.stdout + run.stderr
-    assert "UV_INDEX_DYNFARM_PASSWORD" in machine.uv_credential_variables  # uv sees it, as the variable it reads
+    assert "UV_INDEX_DYNFARM_USERNAME" in machine.uv_credential_variables  # uv sees them, as the variables it reads
+    assert "UV_INDEX_DYNFARM_PASSWORD" in machine.uv_credential_variables
+    assert machine.installed_command_credential_variables.strip() == "dynfarm-env"  # nothing else the script runs
     assert run.stdout.strip().splitlines()[-3:-1] == ["dynfarm 0.1.0", ""]  # the check ran the installed command
+
+
+def test_the_uv_credential_variables_are_not_read_from_the_callers_environment(tmp_path):
+    machine = Machine(tmp_path, tags=TAGS)
+    uv_names = {"UV_INDEX_DYNFARM_USERNAME": "alice", "UV_INDEX_DYNFARM_PASSWORD": FAKE_TOKEN}
+    run = machine.run(extra_env=uv_names)
+    assert run.returncode == 0, run.stderr
+    assert "--index" not in machine.uv_calls[0] and f"git+{GIT_URL}@v0.1.1" in machine.uv_calls[0]
+
+
+def test_the_scripts_never_export_the_uv_credential_variables_to_the_persons_shell():
+    sh, ps1 = INSTALL_SH.read_text(), INSTALL_PS1.read_text()
+    code_sh = "\n".join(line for line in sh.splitlines() if not line.lstrip().startswith("#"))
+    assert "export UV_INDEX" not in code_sh
+    assert re.search(r"^\s*UV_INDEX_DYNFARM_USERNAME=.*UV_INDEX_DYNFARM_PASSWORD=.*\\$", code_sh, re.MULTILINE)
+    # PowerShell has no per-command environment: they are set around the uv call and put back in a `finally`.
+    assert re.search(
+        r"finally \{[^}]*\$env:UV_INDEX_DYNFARM_USERNAME = \$Saved[^}]*\$env:UV_INDEX_DYNFARM_PASSWORD", ps1
+    )
 
 
 def test_without_a_version_the_registry_path_installs_the_latest(tmp_path):
@@ -380,7 +417,7 @@ def test_without_a_version_the_registry_path_installs_the_latest(tmp_path):
 
 def test_with_half_of_the_registry_credentials_it_falls_back_to_git_instead_of_failing_late(tmp_path):
     machine = Machine(tmp_path, tags=TAGS)
-    assert machine.run(extra_env={"UV_INDEX_DYNFARM_USERNAME": "alice"}).returncode == 0
+    assert machine.run(extra_env={"DYNFARM_INDEX_USERNAME": "alice"}).returncode == 0
     assert "--index" not in machine.uv_calls[0] and f"git+{GIT_URL}@v0.1.1" in machine.uv_calls[0]
 
 
@@ -562,7 +599,7 @@ def test_the_readme_lists_every_exit_code_a_script_can_see():
 def test_the_readme_lists_every_environment_variable_the_code_reads():
     sources = "\n".join(path.read_text() for path in (ROOT / "src" / "dynfarm").rglob("*.py"))
     names = {_brand.env(suffix) for suffix in re.findall(r'\benv\("([A-Z_]+)"\)', sources)}
-    names |= {_brand.LEGACY_ENV_TOKEN, _brand.LEGACY_ENV_HOST, "NO_COLOR", "CI"}
+    names |= {"NO_COLOR", "CI", "DYNFARM_INDEX_USERNAME", "DYNFARM_INDEX_PASSWORD"}
     assert {"DYNFARM_HOST", "DYNFARM_TOKEN", "DYNFARM_CONFIG_DIR", "DYNFARM_DEBUG"} <= names
     section = readme().split("### Environment variables", 1)[1].split("###", 1)[0]
     missing = sorted(name for name in names if f"`{name}`" not in section)

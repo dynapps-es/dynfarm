@@ -441,15 +441,27 @@ def test_with_no_farm_configured_a_command_exits_2_and_says_how_to_configure_one
     assert "dynfarm auth login" in result.stderr
 
 
-def test_without_an_injected_lookup_dynfarm_token_wins_over_the_farm_py_alias(fake_farm, monkeypatch):
+def test_without_an_injected_lookup_the_token_comes_from_dynfarm_token(fake_farm, monkeypatch):
     monkeypatch.setenv("DYNFARM_HOST", HOST)
-    monkeypatch.setenv("AGENT_FARM_URL", HOST)  # the farm.py variable answers only for farm.py's own farm
-    monkeypatch.setenv("AGENT_FARM_TOKEN", "tok-bob")
     monkeypatch.setenv("DYNFARM_TOKEN", ADMIN)
     result = CliRunner().invoke(cli, ["ping"], obj=AppContext(transport=fake_farm.transport()))
     assert result.stdout == "dana\n"
-    monkeypatch.delenv("DYNFARM_TOKEN")
-    assert CliRunner().invoke(cli, ["ping"], obj=AppContext(transport=fake_farm.transport())).stdout == "bob\n"
+
+
+def test_farm_py_s_variables_alone_configure_nothing_and_no_request_carries_an_authorization_header(
+    fake_farm, monkeypatch
+):
+    monkeypatch.setenv("AGENT_FARM_URL", HOST)
+    monkeypatch.setenv("AGENT_FARM_TOKEN", "tok-bob")  # farm.py's variables: only DYNFARM_* are read
+    no_farm = CliRunner().invoke(cli, ["ping"], obj=AppContext(transport=fake_farm.transport()))
+    assert no_farm.exit_code == 2
+    assert "no farm configured" in no_farm.stderr
+    monkeypatch.setenv("DYNFARM_HOST", HOST)
+    no_token = CliRunner().invoke(cli, ["ping"], obj=AppContext(transport=fake_farm.transport()))
+    assert no_token.exit_code == 4
+    assert f"no token for {HOST}" in no_token.stderr
+    assert fake_farm.requests == []
+    assert "tok-bob" not in no_farm.output + no_token.output
 
 
 def test_the_global_debug_flag_traces_to_stderr_and_leaves_stdout_alone(run_cli):

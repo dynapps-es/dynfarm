@@ -32,18 +32,17 @@ irm -Headers @{ "PRIVATE-TOKEN" = $env:GITLAB_TOKEN } "https://gitlab.dynapps.be
 Both scripts install the latest release; a version goes after the script (`sh cli/install.sh 0.1.0`,
 `.\cli\install.ps1 -Version 0.1.0`, or `| sh -s -- 0.1.0` when piped). Which source they use depends on one thing:
 
-- **The package registry of the project**, when `UV_INDEX_DYNFARM_USERNAME` (your GitLab user name) and
-  `UV_INDEX_DYNFARM_PASSWORD` (the token) are set. `uv` reads them itself; the scripts never put them in a URL or print
-  them.
+- **The package registry of the project**, when `DYNFARM_INDEX_USERNAME` (your GitLab user name) and
+  `DYNFARM_INDEX_PASSWORD` (a personal access token with the `read_api` scope) are set. The scripts hand them to `uv`
+  for the one install and nowhere else: they never put them in a URL, print them or leave them in your shell. The
+  registry is `https://gitlab.dynapps.be/api/v4/projects/4378/packages/pypi/simple`.
 - **git**, otherwise, at the release tag (`git+https://gitlab.dynapps.be/infra-es/farm-ai/cli.git@v0.1.0`), with your
   git credentials.
 
 **By hand**, with the tool you prefer:
 
 ```bash
-# registry (UV_INDEX_DYNFARM_USERNAME and UV_INDEX_DYNFARM_PASSWORD set):
-uv tool install --index dynfarm=https://gitlab.dynapps.be/api/v4/projects/4378/packages/pypi/simple dynfarm
-# git:
+# git (the registry is what the scripts above are for: they sign uv in without a credential in a URL):
 uv tool install git+https://gitlab.dynapps.be/infra-es/farm-ai/cli.git@v0.1.0
 pipx install git+https://gitlab.dynapps.be/infra-es/farm-ai/cli.git@v0.1.0
 ```
@@ -98,14 +97,12 @@ dynfarm auth logout --hostname https://other-farm.example.com
   Linux), under the service `dynfarm` and the farm's URL. With `--insecure-storage`, or when the machine has no
   keyring, it goes in plain text into `config.toml` in the config directory (`DYNFARM_CONFIG_DIR`, by default the
   OS's per-user config directory), readable only by you, and `dynfarm` warns you when it falls back to it.
-- **Where the token is looked for**, first answer wins: `DYNFARM_TOKEN`, `AGENT_FARM_TOKEN` (the variable `farm.py`
-  uses), the keyring, the config file. `DYNFARM_TOKEN` answers for whichever farm a command talks to;
-  `AGENT_FARM_TOKEN` only for `farm.py`'s own farm (below).
-- **If you already use `farm.py`**: `AGENT_FARM_TOKEN` and `AGENT_FARM_URL` work as they are, and on a terminal
-  `auth login` offers the key `farm.py` keeps in the keyring (service `agent-farm-token`). Both belong to the one farm
-  `farm.py` talks to — `AGENT_FARM_URL`, or `https://farm-dev.ai.dyncloud.es` when it is unset — so `dynfarm` uses
-  them only for that farm and never sends them to another one (`auth status` says when `AGENT_FARM_TOKEN` is ignored
-  for a farm). For any other farm, log in or set `DYNFARM_TOKEN`.
+- **Where the token is looked for**, first answer wins: `DYNFARM_TOKEN`, the keyring, the config file.
+  `DYNFARM_TOKEN` answers for whichever farm a command talks to. Every environment variable of `dynfarm` starts with
+  `DYNFARM_`: the variables of other tools, such as the token and URL variables `farm.py` uses, are not read.
+- **If you already use `farm.py`**: on a terminal `auth login` offers the key `farm.py` keeps in the keyring (service
+  `agent-farm-token`), but only for the one farm `farm.py` talks to, `https://farm-dev.ai.dyncloud.es`, and never for
+  another. For any other farm, log in with its own token or set `DYNFARM_TOKEN`.
 - **`auth status` never prints the token**, only where it came from; it tells an expired token (get a new one) from
   an invalid one (the farm does not accept it), and exits 1 when any farm has a problem.
 - **`auth token` is the one command that prints it**, for scripts:
@@ -117,18 +114,20 @@ dynfarm auth logout --hostname https://other-farm.example.com
 
 Set `DYNFARM_HOST` and `DYNFARM_TOKEN` (a masked, protected CI variable) and run commands; no `auth login` needed.
 When `CI` is set, `dynfarm` never touches a keyring, not even to read. In a GitLab CI job of another project, install it
-from this project's registry, with the credentials in variables and not in a URL:
+from this project's registry with `install.sh`, which takes the credentials from variables and never from a URL.
+Define `DYNFARM_INDEX_USERNAME` (a GitLab user name) and `DYNFARM_INDEX_PASSWORD` (its `read_api` token) as masked,
+protected CI variables of your project, next to `DYNFARM_TOKEN`:
 
 ```yaml
 review:
   image: python:3.13-slim
   variables:
-    UV_INDEX_DYNFARM_USERNAME: gitlab-ci-token
-    UV_INDEX_DYNFARM_PASSWORD: $CI_JOB_TOKEN     # this project must allow your project's job token (Settings, CI/CD)
-    DYNFARM_HOST: https://farm.example.com       # DYNFARM_TOKEN: a masked, protected variable of your project
+    DYNFARM_HOST: https://farm.example.com
   script:
     - pip install -q uv
-    - uv tool install -q --index dynfarm=https://gitlab.dynapps.be/api/v4/projects/4378/packages/pypi/simple dynfarm
+    - >
+      curl -fsSL --header "PRIVATE-TOKEN: $DYNFARM_INDEX_PASSWORD"
+      "https://gitlab.dynapps.be/api/v4/projects/4378/repository/files/install.sh/raw?ref=main" | sh
     - export PATH="$(uv tool dir --bin):$PATH"
     - dynfarm task run developer-skills:code-reviewer --input "Review MR $CI_MERGE_REQUEST_IID." --exit-status
 ```
@@ -383,11 +382,13 @@ never repeated by itself.
 | `DYNFARM_TOKEN` | The token, for whichever farm the command talks to; beats the keyring and the config file |
 | `DYNFARM_CONFIG_DIR` | Where `config.toml` lives (default: your OS's per-user config directory: `~/.config/dynfarm` on Linux, `~/Library/Application Support/dynfarm` on macOS, your application-data folder on Windows) |
 | `DYNFARM_DEBUG` | Same as `--debug` |
-| `AGENT_FARM_TOKEN`, `AGENT_FARM_URL` | What `farm.py` uses; read as lower-precedence aliases, for that one farm (see Authentication) |
 | `CI` | When set, no keyring is touched: the token must come from `DYNFARM_TOKEN` |
 | `NO_COLOR` | No colour in the output |
-| `HTTPS_PROXY`, `NO_PROXY` | Honoured, as by any HTTP client |
-| `UV_INDEX_DYNFARM_USERNAME`, `UV_INDEX_DYNFARM_PASSWORD` | Not read by `dynfarm`: the credentials `uv` and the install scripts use for the package registry |
+| `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` | Honoured, as by any HTTP client |
+| `DYNFARM_INDEX_USERNAME`, `DYNFARM_INDEX_PASSWORD` | Not read by `dynfarm` but by the install scripts: the credentials for the project's package registry (see Install) |
+
+Every variable of `dynfarm` starts with `DYNFARM_`; the others in the table are conventions that are not ours. The
+variables of other tools, such as the token and URL variables `farm.py` uses, are not read.
 
 ### Shell completion
 

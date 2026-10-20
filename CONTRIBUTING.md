@@ -27,6 +27,13 @@ Repeat the `pip install` after every pull: dependencies are pinned and change wi
   Branches `feat/…`, `fix/…`, `docs/…`; merge requests with a merge commit, opened as drafts.
 - **The name `dynfarm` lives in `src/dynfarm/_brand.py`.** Never hard-code it elsewhere; derive env names, paths and
   the keyring service from `_brand`.
+- **Every environment variable of the tool starts with `DYNFARM_`** (`_brand.env("NAME")` builds the name). Variables
+  of other tools are not read, not even as an alias — least of all the token variable `farm.py` uses: a token
+  exported for one farm in a shell profile is exactly what must not follow a person to another. The only
+  others the code and the install scripts may mention are standard conventions (`CI`, `NO_COLOR`, `TERM`, `HOME`,
+  `PATH`, `XDG_*`, the proxy variables httpx reads), each listed with its reason in an allowlist in
+  `tests/test_env_prefix.py`, which scans `src/` and both install scripts. A new variable outside the prefix fails
+  that test; adding it to the allowlist needs a reason a reviewer can check.
 
 ## Tests
 
@@ -86,7 +93,7 @@ answer too, so a command that sends a field the API does not know fails its test
 
 - Fixtures (`tests/conftest.py`): `fake_farm` (the model), `run_cli(args, input=None, token=...)` (the real `dynfarm`
   in-process, against the fake, as `tok-alice` by default) and `sleeps` (the retry pauses, recorded instead of slept).
-  The environment is scrubbed of `DYNFARM_*` / `AGENT_FARM_*` and the config dir is a temp dir in every test.
+  The environment is scrubbed of `DYNFARM_*` and the config dir is a temp dir in every test.
 - The keyring is an in-memory one in every test (`memory_keyring`, autouse; `memory_keyring.entries` and `.calls`),
   never the real Keychain, which would pop dialogs and keep test tokens. `use_keyring(fail.Keyring())` swaps in another
   backend (absent, broken, forgetful). `CI` is unset in every test; set it only to test what it changes.

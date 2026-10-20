@@ -2,10 +2,10 @@
 
 One token per farm, like `gh`. Looking one up goes, first answer wins:
 
-1. `DYNFARM_TOKEN`, then `AGENT_FARM_TOKEN` (the variable `farm.py` documents): CI and scripts set these, and an
-   explicit environment beats anything stored. `DYNFARM_TOKEN` answers for whichever farm is targeted (like
-   `GH_TOKEN`). `AGENT_FARM_TOKEN` answers only for `farm.py`'s own farm (`legacy_host`): people export it in their
-   shell profile for one farm, and sending it to every other farm a command is pointed at would hand it to them.
+1. `DYNFARM_TOKEN`: CI and scripts set it, and an explicit environment beats anything stored. It answers for
+   whichever farm is targeted (like `GH_TOKEN`). It is the only environment variable that carries a token: a
+   variable of another tool (the one `farm.py` uses) is not read, so a token meant for one farm is never
+   handed to another by accident.
 2. The OS keyring (Keychain, Windows Credential Manager, Secret Service), service `_brand.KEYRING_SERVICE`, account the
    normalised farm URL, so two farms never share an entry.
 3. `token` in the farm's `[hosts."<url>"]` table of `config.toml`, a `0600` file: only for a farm whose person chose
@@ -13,6 +13,8 @@ One token per farm, like `gh`. Looking one up goes, first answer wins:
 
 When `CI` is set the keyring is never touched, not even to read: a CI runner has no keyring worth trusting, and a
 backend that opens a dialog would hang the job.
+
+`farm.py`'s keyring entry is not a source: `auth login` may offer it, for `farm.py`'s own farm only (`legacy_host`).
 
 The token is never put in a message. The keyring libraries' own errors can quote what they were handed, so every
 keyring call goes through `_call`, which keeps only the error's class name (`KeyringUnavailable.reason`) and drops the
@@ -32,10 +34,9 @@ import click
 
 from dynfarm import _brand
 from dynfarm.config import config_path, load_config, normalize_host, save_config
-from dynfarm.errors import ConfigError
 
-#: The environment variables that carry a token, in precedence order (`AGENT_FARM_TOKEN` only for `legacy_host`).
-ENV_TOKENS = (_brand.env("TOKEN"), _brand.LEGACY_ENV_TOKEN)
+#: The environment variable that carries a token.
+ENV_TOKEN = _brand.env("TOKEN")
 
 SOURCE_KEYRING = "keyring"
 SOURCE_FILE = "file"
@@ -55,7 +56,7 @@ class KeyringUnavailable(Exception):
 
 @dataclass(frozen=True)
 class Resolved:
-    """A token and where it came from: `env:DYNFARM_TOKEN`, `env:AGENT_FARM_TOKEN`, `keyring` or `file`."""
+    """A token and where it came from: `env:DYNFARM_TOKEN`, `keyring` or `file`."""
 
     token: str = field(repr=False)
     source: str
@@ -76,36 +77,15 @@ def in_ci(environ: Mapping[str, str]) -> bool:
     return environ.get("CI", "").strip().lower() not in _FALSEY
 
 
-def legacy_host(environ: Mapping[str, str]) -> str | None:
-    """The one farm `farm.py`'s token belongs to: `AGENT_FARM_URL`, else `farm.py`'s built-in farm.
-
-    None when `AGENT_FARM_URL` is not a valid farm URL: then the token belongs to no farm this tool would talk to.
-    """
-    raw = environ.get(_brand.LEGACY_ENV_HOST, "").strip() or _brand.LEGACY_DEFAULT_HOST
-    try:
-        return normalize_host(raw)
-    except ConfigError:
-        return None
+def legacy_host() -> str:
+    """The one farm `farm.py`'s keyring entry belongs to: `farm.py` knows a single, built-in farm."""
+    return normalize_host(_brand.LEGACY_DEFAULT_HOST)
 
 
-def env_token(environ: Mapping[str, str], host: str) -> Resolved | None:
-    """The environment's token for `host`, if any; an empty or blank variable counts as unset.
-
-    `DYNFARM_TOKEN` applies to any farm; `AGENT_FARM_TOKEN` only when `host` is `legacy_host` (see the module doc).
-    """
-    for name in ENV_TOKENS:
-        value = environ.get(name, "").strip()
-        if not value:
-            continue
-        if name == _brand.LEGACY_ENV_TOKEN and normalize_host(host) != legacy_host(environ):
-            continue
-        return Resolved(value, f"env:{name}")
-    return None
-
-
-def ignored_legacy_token(environ: Mapping[str, str], host: str) -> bool:
-    """Whether `AGENT_FARM_TOKEN` is set but belongs to another farm than `host` (worth telling the person)."""
-    return bool(environ.get(_brand.LEGACY_ENV_TOKEN, "").strip()) and normalize_host(host) != legacy_host(environ)
+def env_token(environ: Mapping[str, str]) -> Resolved | None:
+    """The environment's token, if any; an empty or blank variable counts as unset. It applies to any farm."""
+    value = environ.get(ENV_TOKEN, "").strip()
+    return Resolved(value, f"env:{ENV_TOKEN}") if value else None
 
 
 class TokenStore:
@@ -123,7 +103,7 @@ class TokenStore:
     def resolve(self, host: str) -> Resolved | None:
         """The token a command uses for `host`, with its source, or None when there is none anywhere."""
         host = normalize_host(host)
-        found = env_token(self.environ, host)
+        found = env_token(self.environ)
         if found is not None:
             return found
         if not in_ci(self.environ):
@@ -170,7 +150,7 @@ class TokenStore:
         never be offered to, or sent to, a farm it does not belong to. Only a hint for `auth login`: any failure is
         "not there", silently.
         """
-        if in_ci(self.environ) or normalize_host(host) != legacy_host(self.environ):
+        if in_ci(self.environ) or normalize_host(host) != legacy_host():
             return None
         service = _brand.LEGACY_KEYRING_SERVICE
         try:

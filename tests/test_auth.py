@@ -178,13 +178,24 @@ def test_login_offers_the_farm_py_key_on_a_terminal_for_farm_py_s_farm(invoke, m
     assert_never_shown(result)
 
 
-def test_login_offers_the_farm_py_key_for_the_farm_named_by_agent_farm_url(invoke, memory_keyring, monkeypatch):
-    monkeypatch.setenv("AGENT_FARM_URL", HOST)
-    memory_keyring.entries[(_brand.LEGACY_KEYRING_SERVICE, getpass.getuser())] = SENTINEL
-    result = invoke(["auth", "login", "--hostname", HOST], input="y\n", tty=True)
+def test_login_does_not_move_the_farm_py_key_to_another_farm_because_farm_py_s_url_variable_is_set(
+    invoke, memory_keyring, monkeypatch
+):
+    monkeypatch.setenv("AGENT_FARM_URL", HOST)  # farm.py's variable: not read, so it cannot widen the key's farm
+    memory_keyring.entries[(_brand.LEGACY_KEYRING_SERVICE, getpass.getuser())] = BOB
+    result = invoke(["auth", "login", "--hostname", HOST], input=f"{SENTINEL}\n", tty=True)
     assert result.exit_code == 0, result.output
-    assert "farm.py" in result.stderr
+    assert "farm.py" not in result.stderr
     assert memory_keyring.entries[(SERVICE, HOST)] == SENTINEL
+    assert_never_shown(result, BOB)
+
+
+def test_login_without_a_terminal_does_not_take_its_farm_from_the_farm_py_url_variable(invoke, farm, monkeypatch):
+    monkeypatch.setenv("AGENT_FARM_URL", HOST)
+    result = invoke(["auth", "login", "--with-token"], input=f"{SENTINEL}\n")
+    assert result.exit_code == 2
+    assert "which farm? pass --hostname URL" in result.stderr
+    assert farm.requests == []
 
 
 def test_the_farm_py_key_is_not_offered_for_another_farm(invoke, memory_keyring):
@@ -246,38 +257,48 @@ def test_a_second_login_keeps_the_first_farm_as_the_default(invoke):
     assert read_config()["default_host"] == HOST
 
 
-def test_login_warns_when_an_environment_token_will_take_precedence(invoke, monkeypatch):
-    monkeypatch.setenv("AGENT_FARM_URL", HOST)
-    monkeypatch.setenv("AGENT_FARM_TOKEN", BOB)
-    result = login(invoke)
-    assert result.exit_code == 0, result.output
-    assert "warning: AGENT_FARM_TOKEN is set and takes precedence over the stored token" in result.stderr
-    assert_never_shown(result, BOB)
-
-
-def test_login_and_logout_do_not_warn_about_the_farm_py_variable_for_another_farm(invoke, monkeypatch):
-    monkeypatch.setenv("AGENT_FARM_TOKEN", BOB)  # farm.py's, for its built-in farm
+def test_login_and_logout_warn_when_dynfarm_token_takes_precedence_over_the_stored_one(invoke, monkeypatch):
+    monkeypatch.setenv("DYNFARM_TOKEN", BOB)
     logged_in = login(invoke)
     assert logged_in.exit_code == 0, logged_in.output
+    assert "warning: DYNFARM_TOKEN is set and takes precedence over the stored token" in logged_in.stderr
+    logged_out = invoke(["auth", "logout", "--hostname", HOST, "--yes"])
+    assert logged_out.exit_code == 0, logged_out.output
+    assert "warning: DYNFARM_TOKEN is still set in this environment" in logged_out.stderr
+    assert_never_shown(logged_in, BOB)
+    assert_never_shown(logged_out, BOB)
+
+
+def test_the_farm_py_token_variable_is_not_read_by_login_logout_status_or_token(invoke, farm, monkeypatch):
+    monkeypatch.setenv("AGENT_FARM_TOKEN", BOB)  # farm.py's variable: only DYNFARM_* variables are read
+    logged_in = login(invoke)
+    assert logged_in.exit_code == 0, logged_in.output
+    farm.requests.clear()
     logged_out = invoke(["auth", "logout", "--hostname", HOST, "--yes"])
     assert logged_out.exit_code == 0, logged_out.output
     assert "AGENT_FARM_TOKEN" not in logged_in.stderr + logged_out.stderr
-
-
-def test_the_farm_py_variable_is_not_a_token_for_another_farm_in_status_or_token(invoke, farm, monkeypatch):
-    monkeypatch.setenv("AGENT_FARM_TOKEN", BOB)
     status = invoke(["auth", "status", "--hostname", HOST])
     assert status.exit_code == 1
-    assert status.stdout.splitlines() == [
-        HOST,
-        "  AGENT_FARM_TOKEN is set but belongs to farm.py's farm, not this one",
-        f"  not logged in — run `dynfarm auth login --hostname {HOST}`",
-    ]
+    assert status.stdout.splitlines() == [HOST, f"  not logged in — run `dynfarm auth login --hostname {HOST}`"]
+    as_json = invoke(["auth", "status", "--hostname", HOST, "--json"])
+    assert json.loads(as_json.stdout) == [{"host": HOST, "default": False, "state": "logged_out", "source": None}]
     token = invoke(["auth", "token", "--hostname", HOST])
     assert token.exit_code == 4
     assert token.stdout == ""
+    assert all("authorization" not in r.headers for r in farm.requests)
     assert farm.requests == []
     assert_never_shown(status, BOB)
+
+
+def test_the_farm_py_url_variable_names_no_farm_for_status_token_or_switch(invoke, farm, monkeypatch):
+    monkeypatch.setenv("AGENT_FARM_URL", HOST)
+    status = invoke(["auth", "status"])
+    assert status.exit_code == 4
+    assert "not logged in to any farm" in status.stderr
+    token = invoke(["auth", "token"])
+    assert token.exit_code == 2
+    assert "no farm configured" in token.stderr
+    assert farm.requests == []
 
 
 # -- status -------------------------------------------------------------------------------------------------------

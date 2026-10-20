@@ -12,8 +12,9 @@ First release: a command-line client for the Dynapps Agent Farm API.
 
 - **Farms and authentication**: `dynfarm auth login|status|token|logout|switch` for several farms at once. A token is
   checked against the farm's `/whoami` before it is saved, kept in the operating system's keyring (a plain-text file
-  readable only by you, with a warning, when there is none) and looked for in `DYNFARM_TOKEN`, `AGENT_FARM_TOKEN`, the
-  keyring and the file, in that order. `auth status` tells an expired token from an invalid one and never prints it. A
+  readable only by you, with a warning, when there is none) and looked for in `DYNFARM_TOKEN`, the
+  keyring and the file, in that order. Every environment variable of the tool starts with `DYNFARM_`; those of other tools
+  (such as the ones `farm.py` uses) are not read, though `auth login` offers the key `farm.py` keeps in the keyring, for its own farm only. `auth status` tells an expired token from an invalid one and never prints it. A
   token is never sent over plain `http` except to a loopback address.
 - **Tasks**: `dynfarm task run|list|view|watch|logs|result|cancel`, with `last` for your newest task, `--watch` and
   `--exit-status` for scripts, and result downloads checked against the farm's checksum.
@@ -29,7 +30,8 @@ First release: a command-line client for the Dynapps Agent Farm API.
   (0, 1, 2, 4, and 130 for Ctrl-C while watching a task).
 - **`dynfarm completion bash|zsh|fish`** prints the shell's tab-completion script.
 - **Installation**: `install.sh` (macOS, Linux) and `install.ps1` (Windows) install `uv` when it is missing, then
-  `dynfarm` from the project's package registry or from git.
+  `dynfarm` from the project's package registry (with `DYNFARM_INDEX_USERNAME` and `DYNFARM_INDEX_PASSWORD`, which
+  the scripts hand to `uv` for that one install only) or from git.
 
 ### Quality gates
 

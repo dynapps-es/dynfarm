@@ -14,7 +14,7 @@ HOST="${1:?usage: smoke_live.sh FARM_URL}"
 : "${DYNFARM_SMOKE_VALUE:?set DYNFARM_SMOKE_VALUE (a throw-away secret)}"
 
 # Only what this script decides: no token or farm from the caller's environment may shadow the keyring path.
-unset DYNFARM_TOKEN DYNFARM_HOST AGENT_FARM_TOKEN AGENT_FARM_URL CI
+unset DYNFARM_TOKEN DYNFARM_HOST CI
 DYNFARM_CONFIG_DIR="$(mktemp -d)"
 export DYNFARM_CONFIG_DIR
 STAMP="$(date -u +%Y%m%d%H%M%S)"
