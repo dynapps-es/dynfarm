@@ -4,8 +4,8 @@ It is a module of its own, free of imports, because `cli.py` builds it on every 
 --help` does not pay for `httpx`). The three optional fields are seams for tests and for the `auth` commands:
 
 - `transport` replaces the network (`httpx.MockTransport` over the fake farm in the unit tests);
-- `token_provider(host) -> str | None` is how a command finds the token of a farm; `dynfarm.tokens`
-  installs the real one (environment, keyring, file) and until then `http.env_token_provider` reads the environment;
+- `token_provider(host) -> str | None` is how a command finds the token of a farm; when it is None,
+  `dynfarm.tokens.token_for` answers (environment, keyring, config file);
 - `sleep` replaces `time.sleep` so the retry tests do not wait.
 """
 

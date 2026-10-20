@@ -1,7 +1,8 @@
-"""Fixtures shared by every test: a clean environment, an isolated config dir, the fake farm and a CLI runner.
+"""Fixtures shared by every test: a clean environment, an isolated config dir and keyring, the fake farm, a CLI runner.
 
-Why the first two are `autouse`: a test that forgot to isolate would read the developer's real `DYNFARM_TOKEN` or
-write into their real config directory. Isolation is the default; a test has to go out of its way to leave it.
+Why the first three are `autouse`: a test that forgot to isolate would read the developer's real `DYNFARM_TOKEN`,
+write into their real config directory, or put a test token in their real Keychain (which also pops dialogs on macOS).
+Isolation is the default; a test has to go out of its way to leave it.
 """
 
 from __future__ import annotations
@@ -11,9 +12,12 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import click
+import keyring.core
 import pytest
 from click.testing import CliRunner, Result
 from fakefarm import ALICE, FakeFarm
+from keyring.backend import KeyringBackend
+from keyring.errors import PasswordDeleteError
 
 from dynfarm import _brand
 from dynfarm.cli import cli
@@ -25,6 +29,55 @@ def _clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in list(os.environ):
         if name.startswith((_brand.ENV_PREFIX, "AGENT_FARM_")) or name in ("NO_COLOR", "TERM"):
             monkeypatch.delenv(name)
+
+
+@pytest.fixture(autouse=True)
+def _no_ci(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CI runners set `CI`, which makes the token store skip the keyring; tests set it only when they test that."""
+    monkeypatch.delenv("CI", raising=False)
+
+
+class MemoryKeyring(KeyringBackend):
+    """A keyring that lives in a dict and records every call (`calls`), so a test can also prove it was not touched."""
+
+    priority = 1  # type: ignore[assignment]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entries: dict[tuple[str, str], str] = {}
+        self.calls: list[tuple[str, str, str | None]] = []
+
+    def get_password(self, service: str, username: str) -> str | None:
+        self.calls.append(("get", service, username))
+        return self.entries.get((service, username))
+
+    def set_password(self, service: str, username: str, password: str) -> None:
+        self.calls.append(("set", service, username))
+        self.entries[(service, username)] = password
+
+    def delete_password(self, service: str, username: str) -> None:
+        self.calls.append(("delete", service, username))
+        if self.entries.pop((service, username), None) is None:
+            raise PasswordDeleteError("no such entry")
+
+
+@pytest.fixture(autouse=True)
+def memory_keyring(monkeypatch: pytest.MonkeyPatch) -> MemoryKeyring:
+    """The keyring every test sees: in memory, empty. `use_keyring(backend)` swaps in another one."""
+    backend = MemoryKeyring()
+    monkeypatch.setattr(keyring.core, "_keyring_backend", backend)
+    return backend
+
+
+@pytest.fixture
+def use_keyring(monkeypatch: pytest.MonkeyPatch) -> Callable[[KeyringBackend], KeyringBackend]:
+    """`use_keyring(fail.Keyring())`: make the token store meet another backend (broken, absent, forgetful)."""
+
+    def install(backend: KeyringBackend) -> KeyringBackend:
+        monkeypatch.setattr(keyring.core, "_keyring_backend", backend)
+        return backend
+
+    return install
 
 
 @pytest.fixture(autouse=True)

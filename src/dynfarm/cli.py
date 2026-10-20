@@ -16,7 +16,9 @@ from dynfarm._brand import NAME, env
 from dynfarm.context import AppContext
 
 #: name -> "module:attribute" of a click command or group. Order here is the order in `--help`.
-COMMANDS: dict[str, str] = {}
+COMMANDS: dict[str, str] = {
+    "auth": "dynfarm.commands.auth:auth",
+}
 
 
 class LazyGroup(click.Group):

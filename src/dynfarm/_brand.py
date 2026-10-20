@@ -6,7 +6,9 @@ Everything a person sees or configures that carries the name derives from `NAME`
 is this constant plus that one key in `pyproject.toml`.
 
 The `LEGACY_*` names are those of `farm.py`, the client of the `farm-skills` Claude Code plugin. They are read with a
-lower precedence than ours so that someone who already uses `farm.py` or the farm's MCP configures nothing new.
+lower precedence than ours so that someone who already uses `farm.py` or the farm's MCP configures nothing new. But
+`farm.py` knows one farm only, so its token is that farm's: `AGENT_FARM_TOKEN` and its keyring entry are used only for
+the farm `farm.py` itself talks to (`AGENT_FARM_URL`, else `LEGACY_DEFAULT_HOST`), never sent to any other.
 """
 
 from __future__ import annotations
@@ -27,6 +29,9 @@ LEGACY_ENV_TOKEN = "AGENT_FARM_TOKEN"
 LEGACY_ENV_HOST = "AGENT_FARM_URL"
 #: Keychain service where `farm.py` tells people to keep their key (one key, no host).
 LEGACY_KEYRING_SERVICE = "agent-farm-token"
+#: `farm.py`'s built-in farm when `AGENT_FARM_URL` is unset. Used ONLY to tell which farm `AGENT_FARM_TOKEN` and the
+#: `agent-farm-token` keyring entry belong to; it is not a default farm of this tool (there is none).
+LEGACY_DEFAULT_HOST = "https://farm-dev.ai.dyncloud.es"
 
 
 def env(suffix: str) -> str:

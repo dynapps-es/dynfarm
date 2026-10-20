@@ -441,8 +441,9 @@ def test_with_no_farm_configured_a_command_exits_2_and_says_how_to_configure_one
     assert "dynfarm auth login" in result.stderr
 
 
-def test_the_stand_in_token_lookup_reads_dynfarm_token_before_the_farm_py_alias(fake_farm, monkeypatch):
+def test_without_an_injected_lookup_dynfarm_token_wins_over_the_farm_py_alias(fake_farm, monkeypatch):
     monkeypatch.setenv("DYNFARM_HOST", HOST)
+    monkeypatch.setenv("AGENT_FARM_URL", HOST)  # the farm.py variable answers only for farm.py's own farm
     monkeypatch.setenv("AGENT_FARM_TOKEN", "tok-bob")
     monkeypatch.setenv("DYNFARM_TOKEN", ADMIN)
     result = CliRunner().invoke(cli, ["ping"], obj=AppContext(transport=fake_farm.transport()))

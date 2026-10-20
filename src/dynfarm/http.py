@@ -15,7 +15,8 @@ What this module guarantees, and why each point exists:
 - **`--debug` prints method, path, status and milliseconds to stderr, never a header or a body**: a bodies-and-headers
   trace would put tokens and credential values in terminal scrollback and CI logs.
 
-Token lookup is a callable injected through `AppContext.token_provider`; without one, the environment is read.
+Token lookup is a callable injected through `AppContext.token_provider` (tests inject one); without one it is
+`dynfarm.tokens.token_for`: the environment, then the keyring, then the config file.
 """
 
 from __future__ import annotations
@@ -57,13 +58,11 @@ def segment(value: str) -> str:
     return quote(value, safe="")
 
 
-def env_token_provider(host: str) -> str | None:
-    """Phase-02 stand-in for token lookup: `DYNFARM_TOKEN`, then the `AGENT_FARM_TOKEN` alias of `farm.py` (D8)."""
-    for name in (_brand.env("TOKEN"), _brand.LEGACY_ENV_TOKEN):
-        value = os.environ.get(name, "").strip()
-        if value:
-            return value
-    return None
+def default_token_provider(host: str) -> str | None:
+    """The token store's answer for `host` (`dynfarm.tokens`), imported only when a command needs a token."""
+    from dynfarm.tokens import token_for
+
+    return token_for(host)
 
 
 def debug_from_env() -> bool:
@@ -304,7 +303,7 @@ def needs_client(fn: Callable[..., Any] | None = None, *, require_token: bool = 
         def wrapper(*args: Any, hostname: str | None = None, **kwargs: Any) -> Any:
             app = click.get_current_context().ensure_object(AppContext)
             host = resolve_host(hostname)
-            token = (app.token_provider or env_token_provider)(host)
+            token = (app.token_provider or default_token_provider)(host)
             if token is None and require_token:
                 raise AuthRequired(
                     f"no token for {host} — run `{_brand.NAME} auth login`, or set {_brand.env('TOKEN')}"

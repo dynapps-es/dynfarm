@@ -50,6 +50,9 @@ answer too, so a command that sends a field the API does not know fails its test
 - Fixtures (`tests/conftest.py`): `fake_farm` (the model), `run_cli(args, input=None, token=...)` (the real `dynfarm`
   in-process, against the fake, as `tok-alice` by default) and `sleeps` (the retry pauses, recorded instead of slept).
   The environment is scrubbed of `DYNFARM_*` / `AGENT_FARM_*` and the config dir is a temp dir in every test.
+- The keyring is an in-memory one in every test (`memory_keyring`, autouse; `memory_keyring.entries` and `.calls`),
+  never the real Keychain, which would pop dialogs and keep test tokens. `use_keyring(fail.Keyring())` swaps in another
+  backend (absent, broken, forgetful). `CI` is unset in every test; set it only to test what it changes.
 - Tokens: `ALICE`, `BOB` (same tenant), `OTHER` (another tenant), `ADMIN` (`farm:tenant:admin`), `READONLY`, `EXPIRED`.
   Another person's or tenant's object is a 404, as in the real farm.
 - Arrange through the model (`fake_farm.seed_task(ALICE, state="running")`, `set_task`, `fail_next("get_task", ...)`)
