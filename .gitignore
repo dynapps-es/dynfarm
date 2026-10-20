@@ -11,3 +11,8 @@ build/
 coverage.xml
 htmlcov/
 report.xml
+.from-wheel/
+.from-sdist/
+.cache/
+live-openapi.json
+report*.xml

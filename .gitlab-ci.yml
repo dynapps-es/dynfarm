@@ -1,15 +1,23 @@
-# CI of dynfarm. Every push runs lint and the test suite on every supported Python; later stages (end-to-end over a
-# real socket, packaging, API drift, release) are described in CONTRIBUTING.md § "CI".
+# CI of dynfarm. What each job guards, and how to run it locally, is in CONTRIBUTING.md § "CI".
+#
+#   lint       ruff check + ruff format --check
+#   test       the suite on every supported Python, with the coverage floor (pyproject.toml, [tool.coverage.report])
+#   e2e        the installed (not editable) binary, driven in subprocesses against a fake farm on a real socket
+#   package    sdist + wheel built, each installed in a clean venv and run
+#   api-drift  the parity test against the live OpenAPI of the dev farm; scheduled daily, or by hand
+#
+# `api-drift` is the only job that touches a farm, and it only downloads a public document: the CI holds no farm token
+# and must not get one. The live smoke test with a real token runs from a developer's machine.
 
 workflow:
   rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     # A branch with an open MR is tested by its MR pipeline; do not run it twice.
     - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
       when: never
     - if: $CI_COMMIT_BRANCH
     - if: $CI_COMMIT_TAG
-    - if: $CI_PIPELINE_SOURCE == "schedule"
 
 stages:
   - lint
@@ -21,6 +29,8 @@ default:
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  # The document the drift job compares the CLI with. Any farm's /openapi.json works; it needs no token.
+  FARM_OPENAPI_URL: "https://farm-dev.ai.dyncloud.es/openapi.json"
 
 .python:
   cache:
@@ -31,24 +41,101 @@ variables:
     - python -m venv .venv
     - .venv/bin/pip install -q -e '.[dev]'
 
+# The scheduled pipeline exists for `api-drift` alone; the rest already ran when the code last changed.
+.not_scheduled:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - when: on_success
+
 lint:
   stage: lint
   image: python:3.13-slim
-  extends: .python
+  extends: [.python, .not_scheduled]
   script:
     - .venv/bin/ruff check .
     - .venv/bin/ruff format --check .
 
+# The end-to-end suite has its own job (below, on the installed package), so it is left out of the matrix. The floor is
+# `fail_under` in pyproject.toml: pytest-cov reads it, so the command line and the config cannot disagree.
 test:
   stage: test
   image: python:${PYTHON_VERSION}-slim
-  extends: .python
+  extends: [.python, .not_scheduled]
   parallel:
     matrix:
       - PYTHON_VERSION: ["3.11", "3.12", "3.13", "3.14"]
   script:
-    - .venv/bin/python -m pytest -q --junitxml=report.xml
+    - >
+      .venv/bin/python -m pytest -q --ignore=tests/e2e
+      --cov=dynfarm --cov-report=term-missing:skip-covered --cov-report=xml:coverage.xml
+      --junitxml=report.xml
+  coverage: '/^TOTAL\s.*\s(\d+(?:\.\d+)?)%\s*$/'
+  artifacts:
+    when: always
+    paths: [coverage.xml]
+    reports:
+      junit: report.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+
+# `pip install .` without `-e`: what runs is the package as a person gets it, not the source tree. The leak tests run
+# here too, on the installed build.
+e2e:
+  stage: test
+  image: python:3.13-slim
+  extends: [.python, .not_scheduled]
+  before_script:
+    - python -m venv .venv
+    - .venv/bin/pip install -q '.[dev]'
+  script:
+    - .venv/bin/python -c "import dynfarm; assert 'site-packages' in dynfarm.__file__, dynfarm.__file__"
+    - .venv/bin/python -m pytest -q tests/e2e tests/test_secret_leaks.py --junitxml=report-e2e.xml
   artifacts:
     when: always
     reports:
-      junit: report.xml
+      junit: report-e2e.xml
+
+# Build both artifacts, then install each in a venv that has nothing of the project and run it. A command module left
+# out of the wheel, a README the sdist lacks, a broken entry point or a dependency pin that cannot be resolved fail here.
+package:
+  stage: test
+  image: python:3.13-slim
+  extends: [.python, .not_scheduled]
+  script:
+    - .venv/bin/python -m build
+    - ls -l dist
+    - python -m venv .from-wheel
+    - .from-wheel/bin/pip install -q dist/*.whl
+    - .from-wheel/bin/pip check
+    - .from-wheel/bin/dynfarm --version
+    - .from-wheel/bin/dynfarm --help
+    - .from-wheel/bin/dynfarm task --help
+    - |
+      for name in $(.from-wheel/bin/python -c "from dynfarm.cli import COMMANDS; print(*COMMANDS)"); do
+        .from-wheel/bin/dynfarm "$name" --help > /dev/null || { echo "dynfarm $name --help failed"; exit 1; }
+      done
+    - python -m venv .from-sdist
+    - .from-sdist/bin/pip install -q dist/*.tar.gz
+    - .from-sdist/bin/dynfarm --version
+  artifacts:
+    paths: [dist/]
+    expire_in: 1 week
+
+api-drift:
+  stage: test
+  image: python:3.13-slim
+  extends: .python
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    # By hand from any pipeline, without blocking it: it depends on the dev farm being reachable.
+    - when: manual
+      allow_failure: true
+  script:
+    - python tools/fetch_openapi.py "$FARM_OPENAPI_URL" live-openapi.json
+    - DYNFARM_PARITY_OPENAPI="$CI_PROJECT_DIR/live-openapi.json" .venv/bin/python -m pytest -q --tb=short tests/test_parity.py
+  artifacts:
+    when: always
+    paths: [live-openapi.json]
+    expire_in: 1 week

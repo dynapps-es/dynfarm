@@ -34,13 +34,49 @@ Repeat the `pip install` after every pull: dependencies are pinned and change wi
 tools/expect_passed.py 10` fails unless at least 10 tests passed and none failed.
 
 `tests/fixtures/openapi.json` is the Agent Farm API this version of `dynfarm` was written against (es-dev-01,
-pretty-printed, sorted keys). Refresh it when the API changes:
+pretty-printed, sorted keys). Refresh it when the API changes, after the CLI has been updated to match
+(`tests/test_parity.py` says what to update):
 
 ```bash
-curl -sf https://farm-dev.ai.dyncloud.es/openapi.json \
-  | python3 -c "import json,sys;json.dump(json.load(sys.stdin),sys.stdout,indent=2,sort_keys=True);print()" \
-  > tests/fixtures/openapi.json
+python3 tools/fetch_openapi.py https://farm-dev.ai.dyncloud.es/openapi.json tests/fixtures/openapi.json --pretty
+git diff tests/fixtures/openapi.json      # the API's change and nothing else
 ```
+
+The fake farm validates every request and answer against that file, so a refresh can also turn command tests red:
+that is the CLI being told about the new contract.
+
+## CI
+
+Every push runs `lint`, `test`, `e2e` and `package`; a daily schedule on `main` runs `api-drift`. Each job is a command
+you can run locally; the pipeline is red when any of them is.
+
+| Job | Guards against | Locally |
+|---|---|---|
+| `lint` | style drift, unused imports, unformatted code | `ruff check . && ruff format --check .` |
+| `test` (Python 3.11–3.14) | a behaviour that breaks on one supported Python; untested code (coverage floor) | `pytest --ignore=tests/e2e --cov=dynfarm` |
+| `e2e` | a broken entry point, exit code, `--json`, token or secret handling in the *installed* package | `pip install '.[dev]'` (not `-e`), then `pytest tests/e2e tests/test_secret_leaks.py` |
+| `package` | a wheel or sdist that does not install or run in a clean environment | `python -m build`, then install `dist/*.whl` in a new venv and run `dynfarm --help` |
+| `api-drift` | the API changed under the CLI: a new operation without a command, a changed enum, a new required field, a removed field | `python3 tools/fetch_openapi.py URL live.json && DYNFARM_PARITY_OPENAPI=live.json pytest tests/test_parity.py` |
+
+- **Coverage floor**: `fail_under` in `pyproject.toml` (`[tool.coverage.report]`), measured with branches. It is the
+  measured figure rounded down to the nearest 5 and never below 85. Raise it when the measure rises by 5; never lower
+  it to get a change through, write the missing test. A single test file run locally has no floor on purpose.
+- **`tests/test_parity.py`** is the gate between the CLI and the API. Every `operationId` needs a command that declares
+  it with `@operation(...)` (`dynfarm.registry`) or an entry in `EXCLUDED` with the reason. Every fixed list of values
+  a command offers (`click.Choice`) must be mapped to the API enum it mirrors, or declared as not the API's. Each check
+  is a function that returns its problems, and the file proves each one can fail on a mutated copy of the spec.
+- **`tests/e2e/`** runs the `dynfarm` that `pip install` put next to the test interpreter (a missing one is a failure,
+  not a skip), in a subprocess, against `fake_farm.serve()` on a real socket, with its own `HOME` and config dir, `CI=1`
+  (so no keyring is touched) and `NO_PROXY`. One journey per resource, the exit codes a script branches on (0, 1, 2, 4),
+  the retry pauses, and `--help` / `--json` for every command read from the command tree, so a new command is covered
+  the day it is added. When a command needs a task to change state while it is watched, the `finish_after_creation`
+  fixture walks it through states. The editable install also puts a `dynfarm` next to the interpreter, so the suite
+  runs locally without a second install; use a throw-away venv for the non-editable one, or reinstall with `-e` after.
+- **`api-drift` failed**: read the job log; it lists what drifted. If the CLI must change, do it, then refresh the
+  fixture (above). If the API change is not meant to be supported, add an `EXCLUDED` entry with the reason. The job also
+  fails when the runner cannot download the document: that is the farm being unreachable, not drift. The job can be
+  started by hand from any pipeline.
+- **The live smoke test against a real farm is not in CI**: CI has no farm token and must not get one.
 
 ## Testing a command with the fake farm
 

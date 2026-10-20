@@ -56,7 +56,8 @@ def serve(farm: FakeFarm) -> Iterator[str]:
     server.daemon_threads = True
     base = f"http://127.0.0.1:{server.server_address[1]}"
     previous, farm.base_url = farm.base_url, base
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    # A short poll interval: `shutdown()` waits for one, and the end-to-end suite starts a server per test.
+    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True)
     thread.start()
     try:
         yield base

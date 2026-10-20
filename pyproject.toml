@@ -55,6 +55,18 @@ select = ["E", "F", "W", "I", "B", "UP"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
-# Coverage is not in addopts on purpose: the CI `test` job sets the floor; a single test file run locally must not
+# Coverage is not in addopts on purpose: the CI `test` job runs `pytest --cov`; a single test file run locally must not
 # fail for the coverage of the files it does not exercise.
 filterwarnings = ["error::DeprecationWarning:dynfarm"]
+
+[tool.coverage.run]
+source_pkgs = ["dynfarm"]
+branch = true
+
+[tool.coverage.report]
+# The floor of the CI `test` job, the only place it is written. Measured with branches: 97.5 %; the floor is that figure
+# rounded down to the nearest 5, so a change that leaves a command untested turns the pipeline red. Raise it when the
+# measure rises by 5, never lower it to get a change through.
+fail_under = 95
+show_missing = true
+skip_covered = true
