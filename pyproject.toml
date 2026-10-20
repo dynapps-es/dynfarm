@@ -36,6 +36,8 @@ dev = [
     "pyyaml==6.0.3",
     "ruff==0.17.1",
     "twine==7.0.0",
+    # The fake farm checks timezones with zoneinfo; Windows has no system tz database (the CLI itself needs none).
+    "tzdata==2026.5; sys_platform == 'win32'",
 ]
 
 # The GitHub repository is the public face of the project: releases, issues and the changelog live there.
