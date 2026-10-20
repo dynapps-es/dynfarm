@@ -23,15 +23,17 @@ SCHEDULE_ID=""
 CREDENTIAL_SET=""
 LOGGED_IN=""
 
-step() { # step "description" command...
+ERR_FILE="$(mktemp)"
+step() { # step "description" command...  — LAST_OUTPUT is the command's stdout only (stderr carries notices)
     local what="$1"
     shift
     local out
-    if out="$("$@" 2>&1)"; then
+    if out="$("$@" 2>"$ERR_FILE")"; then
         printf 'ok    %s\n' "$what"
         LAST_OUTPUT="$out"
     else
         printf 'FAIL  %s\n%s\n' "$what" "$out"
+        cat "$ERR_FILE"
         exit 1
     fi
 }
@@ -43,7 +45,7 @@ cleanup() {
         && echo "cleanup: credential $NAME deleted"
     [ -n "$LOGGED_IN" ] && dynfarm auth logout --hostname "$HOST" --yes >/dev/null 2>&1 \
         && echo "cleanup: logged out of $HOST"
-    rm -rf "$DYNFARM_CONFIG_DIR"
+    rm -rf "$DYNFARM_CONFIG_DIR" "$ERR_FILE"
 }
 trap cleanup EXIT
 
@@ -65,7 +67,7 @@ step "schedule list" dynfarm schedule list
 step "schedule create (far-future, one run at most)" dynfarm schedule create --json \
     --prompt "dynfarm smoke: this schedule is created, paused and deleted by tools/smoke_live.sh; never run it." \
     --cron "0 3 1 1 *" --timezone UTC --starts-at 2099-01-01T00:00:00Z --max-runs 1
-SCHEDULE_ID="$(printf '%s' "$LAST_OUTPUT" | json_field schedule_id)"
+SCHEDULE_ID="$(printf '%s' "$LAST_OUTPUT" | json_field schedule_id)" || { echo "FAIL  no schedule_id in the answer"; exit 1; }
 step "schedule pause $SCHEDULE_ID" dynfarm schedule pause "$SCHEDULE_ID"
 step "schedule view $SCHEDULE_ID" dynfarm schedule view "$SCHEDULE_ID" --json
 case "$(printf '%s' "$LAST_OUTPUT" | json_field state)" in paused) ;; *) echo "FAIL  schedule not paused"; exit 1 ;; esac
