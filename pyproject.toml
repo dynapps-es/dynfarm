@@ -32,8 +32,15 @@ dev = [
     "build==1.6.1",
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
+    "pyyaml==6.0.3",
     "ruff==0.17.1",
+    "twine==7.0.0",
 ]
+
+# The project is private (infra-es is a private group), so these links are for people who already have access.
+[project.urls]
+Source = "https://gitlab.dynapps.be/infra-es/farm-ai/cli"
+Changelog = "https://gitlab.dynapps.be/infra-es/farm-ai/cli/-/blob/main/CHANGELOG.md"
 
 # The key is the command people type. It must equal `dynfarm._brand.NAME` (tests/test_brand.py).
 [project.scripts]

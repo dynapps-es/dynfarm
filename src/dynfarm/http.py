@@ -3,15 +3,15 @@
 What this module guarantees, and why each point exists:
 
 - **The token goes only where it may.** The client refuses (exit 2) a plain `http://` host that is not loopback
-  (D10) and a token with characters that cannot sit in a header. The token is in the `Authorization` header and
+  and a token with characters that cannot sit in a header. The token is in the `Authorization` header and
   nowhere else: not in the URL, not in the debug line, and if the farm's own text ever echoed it the client masks it.
 - **Errors are the farm's, branched on `error.code`** (`farm-api.md` §15): the envelope becomes a `FarmError`; FastAPI's
   `{"detail": [...]}` 422 (a malformed query or path value) becomes `request_invalid`; a reply that is not an
   envelope at all (a proxy's HTML, a redirect) becomes a generic error naming only the HTTP status.
-- **Retries are conservative** (D14): only `GET`, only when the error says it is retryable, at most 3 attempts,
+- **Retries are conservative**: only `GET`, only when the error says it is retryable, at most 3 attempts,
   waiting the farm's `Retry-After` (capped at 30 s). A `POST`/`PATCH`/`DELETE` never repeats by itself, because
   repeating a launch could launch twice; the error tells the person it can be repeated.
-- **Timeouts** (D15): 10 s to connect, 60 s to read, so a `wait=30` on a task fits.
+- **Timeouts**: 10 s to connect, 60 s to read, so a `wait=30` on a task fits.
 - **`--debug` prints method, path, status and milliseconds to stderr, never a header or a body**: a bodies-and-headers
   trace would put tokens and credential values in terminal scrollback and CI logs.
 

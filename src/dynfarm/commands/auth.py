@@ -13,7 +13,7 @@ The rules these commands keep, and why:
   `DYNFARM_TOKEN` is the variable that answers for any farm.
 - **Expired is not invalid.** `status` says "expired — get a new one" for `token_expired` and "invalid" for
   `token_invalid`, because the first is routine (renew) and the second means stop.
-- **There is no default farm** (D9): `login` takes `--hostname`, `DYNFARM_HOST` / `AGENT_FARM_URL`, or asks; the first
+- **There is no default farm**: `login` takes `--hostname`, `DYNFARM_HOST` / `AGENT_FARM_URL`, or asks; the first
   farm logged in to becomes the default, `switch` changes it.
 - **Logging out does not revoke**: the API has no endpoint for it. The token keeps working until it expires; the
   message says so, so nobody believes a leaked token is dead because they logged out.
@@ -89,7 +89,7 @@ def login(hostname: str | None, with_token: bool, insecure_storage: bool) -> Non
 
 
 def _login_host(flag: str | None, store: TokenStore) -> str:
-    """`--hostname`, else the environment's farm, else a prompt (no built-in default, D9)."""
+    """`--hostname`, else the environment's farm, else a prompt (no built-in default)."""
     for label, value in (
         ("--hostname", flag),
         (_brand.env("HOST"), store.environ.get(_brand.env("HOST"))),

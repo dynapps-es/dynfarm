@@ -1,6 +1,6 @@
 """A small OpenAPI reader for the fake farm: it routes a request to an operation and validates JSON against schemas.
 
-This is what makes the fake farm more than a stub (D17): the pinned `tests/fixtures/openapi.json` decides which
+This is what makes the fake farm more than a stub: the pinned `tests/fixtures/openapi.json` decides which
 operations exist, which query parameters and body fields are allowed, which are required, and what shape every answer
 must have. A CLI that sends a field the API does not know, or forgets a required one, is told so the way the real farm
 would tell it (422) and the fake records it as a violation that fails the test.

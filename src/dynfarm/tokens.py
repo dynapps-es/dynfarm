@@ -1,8 +1,8 @@
 """Where a farm's token is kept, and where a command finds it.
 
-One token per farm, like `gh` (D2, D3). Looking one up goes, first answer wins:
+One token per farm, like `gh`. Looking one up goes, first answer wins:
 
-1. `DYNFARM_TOKEN`, then `AGENT_FARM_TOKEN` (the variable `farm.py` documents, D8): CI and scripts set these, and an
+1. `DYNFARM_TOKEN`, then `AGENT_FARM_TOKEN` (the variable `farm.py` documents): CI and scripts set these, and an
    explicit environment beats anything stored. `DYNFARM_TOKEN` answers for whichever farm is targeted (like
    `GH_TOKEN`). `AGENT_FARM_TOKEN` answers only for `farm.py`'s own farm (`legacy_host`): people export it in their
    shell profile for one farm, and sending it to every other farm a command is pointed at would hand it to them.

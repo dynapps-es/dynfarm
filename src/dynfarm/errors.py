@@ -1,7 +1,7 @@
 """Exit codes, the errors every command can raise, and the one wrapper that turns them into a message and an exit code.
 
 Why this is a module of its own: every command ends the same way, and a script that drives `dynfarm` branches on the
-exit code, so the mapping must live in one place instead of in each command (D13):
+exit code, so the mapping must live in one place instead of in each command:
 
     0  ok
     1  failure: the farm answered an error, or a task did not succeed with `--exit-status`

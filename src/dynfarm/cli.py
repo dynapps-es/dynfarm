@@ -26,6 +26,7 @@ COMMANDS: dict[str, str] = {
     "schedule": "dynfarm.commands.schedule:schedule",
     "credential": "dynfarm.commands.credential:credential",
     "api": "dynfarm.commands.api:api",
+    "completion": "dynfarm.commands.completion:completion",
 }
 
 

@@ -4,6 +4,81 @@
 operation as a command, several farms with their own tokens kept in the system keyring, and the operations that must
 never go through an LLM — handing over a secret — done safely from the terminal.
 
+## Install
+
+`dynfarm` is a Python package (3.11 or later) that installs as a tool of its own, with its own environment, through
+[`uv`](https://docs.astral.sh/uv/). The project is private to Dynapps for now, so every way below needs you to be signed
+in to `gitlab.dynapps.be`: either with **git** (the credentials you already use to clone) or with a **GitLab personal
+access token** with the `read_api` scope (Preferences, Access tokens). Keep the token in an environment variable, never
+in a URL.
+
+**macOS and Linux.** The script installs `uv` when it is missing, then `dynfarm`, then runs `dynfarm --version`:
+
+```bash
+git clone https://gitlab.dynapps.be/infra-es/farm-ai/cli.git && sh cli/install.sh        # signed in with git
+# or, without cloning, with a token in GITLAB_TOKEN (it travels in a header, not in the URL):
+curl -fsSL --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+  "https://gitlab.dynapps.be/api/v4/projects/4378/repository/files/install.sh/raw?ref=main" | sh
+```
+
+**Windows (PowerShell).**
+
+```powershell
+git clone https://gitlab.dynapps.be/infra-es/farm-ai/cli.git; .\cli\install.ps1
+# or, without cloning, with a token in $env:GITLAB_TOKEN:
+irm -Headers @{ "PRIVATE-TOKEN" = $env:GITLAB_TOKEN } "https://gitlab.dynapps.be/api/v4/projects/4378/repository/files/install.ps1/raw?ref=main" | iex
+```
+
+Both scripts install the latest release; a version goes after the script (`sh cli/install.sh 0.1.0`,
+`.\cli\install.ps1 -Version 0.1.0`, or `| sh -s -- 0.1.0` when piped). Which source they use depends on one thing:
+
+- **The package registry of the project**, when `UV_INDEX_DYNFARM_USERNAME` (your GitLab user name) and
+  `UV_INDEX_DYNFARM_PASSWORD` (the token) are set. `uv` reads them itself; the scripts never put them in a URL or print
+  them.
+- **git**, otherwise, at the release tag (`git+https://gitlab.dynapps.be/infra-es/farm-ai/cli.git@v0.1.0`), with your
+  git credentials.
+
+**By hand**, with the tool you prefer:
+
+```bash
+# registry (UV_INDEX_DYNFARM_USERNAME and UV_INDEX_DYNFARM_PASSWORD set):
+uv tool install --index dynfarm=https://gitlab.dynapps.be/api/v4/projects/4378/packages/pypi/simple dynfarm
+# git:
+uv tool install git+https://gitlab.dynapps.be/infra-es/farm-ai/cli.git@v0.1.0
+pipx install git+https://gitlab.dynapps.be/infra-es/farm-ai/cli.git@v0.1.0
+```
+
+If `dynfarm` is not found afterwards, `uv` installed it in a directory that is not on your `PATH` yet: run
+`uv tool update-shell` and open a new terminal. Check it with `dynfarm --version`.
+
+## First steps
+
+```bash
+dynfarm auth login --hostname https://farm.example.com     # asks for your token (hidden) and checks it with the farm
+dynfarm whoami                                             # who the farm thinks you are, and what you may do
+dynfarm plugin list                                        # what the farm can run
+dynfarm task run developer-skills:code-reviewer --input "Review MR 42 of group/project." --watch
+```
+
+Your farm's address and your token come from whoever runs the farm. `dynfarm --help` lists the commands and
+`dynfarm COMMAND --help` explains each one. [Commands](#commands) below has the whole list.
+
+### Several farms
+
+A token belongs to one farm, and `dynfarm` keeps one per farm. The first farm you log in to becomes the default; the
+others are one flag away:
+
+```bash
+dynfarm auth login --hostname https://other-farm.example.com
+dynfarm auth status                                         # every farm you are logged in to, and whether it accepts you
+dynfarm task list --hostname https://other-farm.example.com # one command against another farm
+DYNFARM_HOST=https://other-farm.example.com dynfarm task list   # the same, for a whole shell session or a script
+dynfarm auth switch --hostname https://other-farm.example.com    # make it the default
+```
+
+A token is never sent over plain `http`, except to `localhost`, `127.0.0.1` or `::1` (for a farm you run on your own
+machine).
+
 ## Authentication
 
 `dynfarm` keeps one token per farm, like `gh` does per host. There is no built-in farm: you say which one.
@@ -41,7 +116,24 @@ dynfarm auth logout --hostname https://other-farm.example.com
 ### CI
 
 Set `DYNFARM_HOST` and `DYNFARM_TOKEN` (a masked, protected CI variable) and run commands; no `auth login` needed.
-When `CI` is set, `dynfarm` never touches a keyring, not even to read.
+When `CI` is set, `dynfarm` never touches a keyring, not even to read. In a GitLab CI job of another project, install it
+from this project's registry, with the credentials in variables and not in a URL:
+
+```yaml
+review:
+  image: python:3.13-slim
+  variables:
+    UV_INDEX_DYNFARM_USERNAME: gitlab-ci-token
+    UV_INDEX_DYNFARM_PASSWORD: $CI_JOB_TOKEN     # this project must allow your project's job token (Settings, CI/CD)
+    DYNFARM_HOST: https://farm.example.com       # DYNFARM_TOKEN: a masked, protected variable of your project
+  script:
+    - pip install -q uv
+    - uv tool install -q --index dynfarm=https://gitlab.dynapps.be/api/v4/projects/4378/packages/pypi/simple dynfarm
+    - export PATH="$(uv tool dir --bin):$PATH"
+    - dynfarm task run developer-skills:code-reviewer --input "Review MR $CI_MERGE_REQUEST_IID." --exit-status
+```
+
+`--exit-status` makes the job fail unless the task succeeded.
 
 ## Who you are, and what the farm offers
 
@@ -241,3 +333,82 @@ dynfarm api whoami -i                                       # status line and he
   (exit 2): `api` cannot send your token anywhere but the selected farm. `--hostname` picks another farm.
 - Exit codes are the usual ones: 1 when the farm answers an error, 4 for authentication, 2 for a bad invocation.
   Do not pass a secret with `-f`: it would stay in your shell history. Credentials have their own command.
+
+## Commands
+
+Every command takes `--help`. Those that read from the farm take `--json` (the farm's answer as JSON, for scripts) and
+`--hostname URL` (another farm than the default).
+
+| Command | What it does |
+|---|---|
+| `dynfarm auth login`, `status`, `token`, `logout`, `switch` | Sign in to farms, see where each token is kept, print one for a script, forget one, change the default farm |
+| `dynfarm whoami` | Your subject, tenant, scopes and the expiry of your token |
+| `dynfarm plugin list` | The plugins bundled in the agent image and the agents each brings |
+| `dynfarm callback-key` | The public key that verifies task callbacks |
+| `dynfarm task run`, `list`, `view`, `watch`, `logs`, `result`, `cancel` | Launch an agent task, follow it, read its logs and result, stop it |
+| `dynfarm agent list`, `view`, `create`, `edit`, `delete` | See the agents you can launch and manage your own and your team's |
+| `dynfarm schedule list`, `view`, `create`, `runs`, `fire`, `pause`, `resume`, `delete` | Have the farm launch a task on a cron |
+| `dynfarm credential list`, `view`, `set`, `delete` | Hand a secret to the farm (never on the command line), see its metadata, delete it |
+| `dynfarm api` | Any other call to the farm's API, like `gh api` |
+| `dynfarm completion bash`, `zsh`, `fish` | The shell's tab-completion script |
+
+### Output
+
+On a terminal, tables with relative dates; in a pipe, tab-separated rows without colour codes, so
+`dynfarm task list | cut -f1` just works. `--json` prints the farm's answer as it is. Colour is off when `NO_COLOR` is
+set. `--debug` (or `DYNFARM_DEBUG`) prints each request's method, path, status and time to stderr, never a header or a
+body.
+
+### Exit codes
+
+A script can branch on them:
+
+| Code | Meaning |
+|---|---|
+| `0` | It worked |
+| `1` | The farm answered an error, a network call failed, or a task did not end as `--exit-status` demands |
+| `2` | The command was used wrongly or is misconfigured: a bad option, a missing farm, a plain-`http` farm, a destructive command without a terminal and without `--yes` |
+| `4` | You need to sign in: no token, or the farm says it is invalid or expired |
+| `130` | Ctrl-C while `task watch` (or `run --watch`) was waiting; the task keeps running |
+
+The farm's error code (`not_found`, `insufficient_scope`, `token_expired`...) is printed with its message. Reads that
+fail with a retryable error are repeated up to three times, honouring `Retry-After`; a launch, an edit or a delete is
+never repeated by itself.
+
+### Environment variables
+
+| Variable | Meaning |
+|---|---|
+| `DYNFARM_HOST` | The farm to talk to, instead of the default (same as `--hostname`) |
+| `DYNFARM_TOKEN` | The token, for whichever farm the command talks to; beats the keyring and the config file |
+| `DYNFARM_CONFIG_DIR` | Where `config.toml` lives (default: your OS's per-user config directory: `~/.config/dynfarm` on Linux, `~/Library/Application Support/dynfarm` on macOS, your application-data folder on Windows) |
+| `DYNFARM_DEBUG` | Same as `--debug` |
+| `AGENT_FARM_TOKEN`, `AGENT_FARM_URL` | What `farm.py` uses; read as lower-precedence aliases, for that one farm (see Authentication) |
+| `CI` | When set, no keyring is touched: the token must come from `DYNFARM_TOKEN` |
+| `NO_COLOR` | No colour in the output |
+| `HTTPS_PROXY`, `NO_PROXY` | Honoured, as by any HTTP client |
+| `UV_INDEX_DYNFARM_USERNAME`, `UV_INDEX_DYNFARM_PASSWORD` | Not read by `dynfarm`: the credentials `uv` and the install scripts use for the package registry |
+
+### Shell completion
+
+```bash
+dynfarm completion zsh  >> ~/.zshrc        # bash: >> ~/.bashrc
+dynfarm completion fish > ~/.config/fish/completions/dynfarm.fish
+```
+
+Open a new shell afterwards. Candidates come from `dynfarm` itself, so they are always those of the installed version.
+
+## Upgrade and uninstall
+
+Run the install script again: it installs the latest release (or the one you name) over the current one. By hand, repeat
+the `uv tool install` command of your way in with `--reinstall` (and the new tag, for git). `dynfarm --version` says
+which one you have.
+
+To remove it: `dynfarm auth logout --hostname URL` for each farm (that deletes the stored token), then
+`uv tool uninstall dynfarm`. The config directory (`DYNFARM_CONFIG_DIR`) holds only your farms' addresses and, if the
+machine had no keyring, plain-text tokens: delete it too. Logging out does not revoke the token at the farm.
+
+## Releases
+
+Released versions, and what each changed, are in [CHANGELOG.md](CHANGELOG.md); each one is also a GitLab Release of the
+project, with the files and the install scripts attached. Contributors: see [CONTRIBUTING.md](CONTRIBUTING.md).

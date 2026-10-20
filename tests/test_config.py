@@ -2,8 +2,8 @@
 
 These are the rules every command inherits: hosts are written one way (so a keyring account and a config table agree),
 resolution is `--hostname` > `DYNFARM_HOST` > `AGENT_FARM_URL` > the config's default and fails closed when nothing
-answers (there is no built-in farm, D9), plain `http` is refused unless loopback (D10), and the config file, which can
-hold a token, is private and replaced atomically (D12).
+answers (there is no built-in farm), plain `http` is refused unless loopback, and the config file, which can
+hold a token, is private and replaced atomically.
 """
 
 from __future__ import annotations

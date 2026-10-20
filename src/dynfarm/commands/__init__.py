@@ -4,7 +4,7 @@ What lives here is what more than one command needs to ask a person something:
 
 - `is_interactive()`: whether there is a person at a terminal to ask. A prompt without one would block a script or read
   its stdin as an answer, so a command that needs an answer and has no terminal refuses instead (exit 2).
-- `confirm()`: the one way a command asks before it removes something (D16): `--yes` skips the question; no terminal
+- `confirm()`: the one way a command asks before it removes something: `--yes` skips the question; no terminal
   and no `--yes` is a refusal; "no" changes nothing.
 
 Prompts go to stderr, so stdout carries only the command's output and stays safe to pipe.

@@ -2,18 +2,18 @@
 
 Three things live here because every command needs them before it can make a request:
 
-1. **The config file** (`config.toml`, D12): `default_host` and one `[hosts."<url>"]` table per farm. The token is in it
+1. **The config file** (`config.toml`): `default_host` and one `[hosts."<url>"]` table per farm. The token is in it
    only for a farm whose person chose plain-text storage (`dynfarm auth login --insecure-storage`); the file is
    therefore `0600` and its directory `0700` on POSIX, and it is replaced atomically (temp file + rename) so a crash
    never leaves half a file that holds a token. The directory is `DYNFARM_CONFIG_DIR`, else the OS's per-user
    config dir.
 2. **Host normalisation**: `farm.example.com`, `https://Farm.Example.com/` and `https://farm.example.com/anything`
    are one farm, written one way, so the keyring account, the config table and the comparison all agree.
-3. **Host resolution**: `--hostname` > `DYNFARM_HOST` > `AGENT_FARM_URL` (the alias `farm.py` documents, D8) >
-   `default_host`. There is no built-in default (D9): the tool serves several farms and a Dynapps URL baked in would be
+3. **Host resolution**: `--hostname` > `DYNFARM_HOST` > `AGENT_FARM_URL` (the alias `farm.py` documents) >
+   `default_host`. There is no built-in default: the tool serves several farms and a Dynapps URL baked in would be
    wrong for the others. Nothing resolved is a configuration error (exit 2), never a guess.
 
-Plain `http://` is refused for any host that is not loopback (D10). The check is in `normalize_host`, so every road to
+Plain `http://` is refused for any host that is not loopback. The check is in `normalize_host`, so every road to
 a farm URL (flag, environment, file, a client built directly) goes through it, and a token cannot be handed to a
 network it would cross in clear.
 """
@@ -35,7 +35,7 @@ import tomli_w
 from dynfarm import _brand
 from dynfarm.errors import ConfigError
 
-#: The only hosts a token may be sent to over plain `http` (D10): tests and `local-e2e` talk to these.
+#: The only hosts a token may be sent to over plain `http`: tests and `local-e2e` talk to these.
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 _DEFAULT_PORTS = {"http": 80, "https": 443}

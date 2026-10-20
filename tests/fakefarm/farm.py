@@ -1,4 +1,4 @@
-"""The fake Agent Farm: an in-memory model of the API that the CLI tests run against (D17).
+"""The fake Agent Farm: an in-memory model of the API that the CLI tests run against.
 
 Why it exists: the CLI is only worth as much as its agreement with the real farm, and the real farm cannot be in CI
 (no token, no network). So the fake does what the real one does where it matters to a client, and is held to the same

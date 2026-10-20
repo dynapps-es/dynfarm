@@ -60,8 +60,8 @@ CHOICES_FROM_THE_API: dict[tuple[tuple[str, ...], str], tuple[str, str]] = {
     (("credential", "delete"), "scope"): ("CredentialCreate", "scope"),
 }
 
-#: `click.Choice`s that are not the API's: `dynfarm api -X`.
-CHOICES_NOT_FROM_THE_API: set[tuple[tuple[str, ...], str]] = {(("api",), "method")}
+#: `click.Choice`s that are not the API's: `dynfarm api -X`, and the shells `dynfarm completion` can print for.
+CHOICES_NOT_FROM_THE_API: set[tuple[tuple[str, ...], str]] = {(("api",), "method"), (("completion",), "shell")}
 
 #: Not terminal: the task can still move. Every other state of `TaskOut.state` ends `task watch`.
 LIVE_STATES = {"pending", "queued", "running"}

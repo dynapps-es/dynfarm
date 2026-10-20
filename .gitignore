@@ -16,3 +16,5 @@ report.xml
 .cache/
 live-openapi.json
 report*.xml
+release.env
+release-notes.md

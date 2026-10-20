@@ -55,7 +55,7 @@ you can run locally; the pipeline is red when any of them is.
 | `lint` | style drift, unused imports, unformatted code | `ruff check . && ruff format --check .` |
 | `test` (Python 3.11–3.14) | a behaviour that breaks on one supported Python; untested code (coverage floor) | `pytest --ignore=tests/e2e --cov=dynfarm` |
 | `e2e` | a broken entry point, exit code, `--json`, token or secret handling in the *installed* package | `pip install '.[dev]'` (not `-e`), then `pytest tests/e2e tests/test_secret_leaks.py` |
-| `package` | a wheel or sdist that does not install or run in a clean environment | `python -m build`, then install `dist/*.whl` in a new venv and run `dynfarm --help` |
+| `package` | a wheel or sdist that does not install or run in a clean environment, or whose metadata the registry would refuse | `python -m build && twine check dist/*`, then install `dist/*.whl` in a new venv and run `dynfarm --help` |
 | `api-drift` | the API changed under the CLI: a new operation without a command, a changed enum, a new required field, a removed field | `python3 tools/fetch_openapi.py URL live.json && DYNFARM_PARITY_OPENAPI=live.json pytest tests/test_parity.py` |
 
 - **Coverage floor**: `fail_under` in `pyproject.toml` (`[tool.coverage.report]`), measured with branches. It is the
@@ -76,6 +76,7 @@ you can run locally; the pipeline is red when any of them is.
   fixture (above). If the API change is not meant to be supported, add an `EXCLUDED` entry with the reason. The job also
   fails when the runner cannot download the document: that is the farm being unreachable, not drift. The job can be
   started by hand from any pipeline.
+- **`publish` and `release` run only on a tag `v*`**, after every job above has passed on it (see "Releasing").
 - **The live smoke test against a real farm is not in CI**: CI has no farm token and must not get one.
 
 ## Testing a command with the fake farm
@@ -107,3 +108,30 @@ answer too, so a command that sends a field the API does not know fails its test
   scrubbed environment (`CI=1`, a failing keyring backend, its own `HOME` and config dir, `NO_PROXY`). Any new way
   for a secret to enter or leave the tool gets a test there: the sentinel must be in the body of `POST /credentials`
   and in nothing else — output, `--debug`, files, other requests, argv.
+
+## Releasing
+
+A release is a tag `v<version>` on the default branch, and it is a maintainers' decision: the tag is the act that
+publishes, so nobody cuts one to "see what happens". `v*` tags are protected in the project.
+
+1. In one commit on a branch: set `__version__` in `src/dynfarm/__init__.py` (the only place; `pyproject.toml` reads it)
+   and turn the `## [x.y.z] - unreleased` heading of `CHANGELOG.md` into `## [x.y.z] - YYYY-MM-DD`. Write what a person
+   upgrading needs to know, because that section is the text of the GitLab Release.
+2. Merge it, with a green pipeline.
+3. Tag the merge commit `vx.y.z` and push the tag. The tag pipeline runs `lint`, `test`, `e2e` and `package` again, then:
+   - `publish` runs `tools/check_tag.py`, which fails when the tag is not exactly `v` + the package version or when the
+     changelog has no section for it; builds the sdist and the wheel; runs `twine check`; and uploads both to the
+     project's package registry with the job token (`TWINE_USERNAME=gitlab-ci-token`, `TWINE_PASSWORD=$CI_JOB_TOKEN`),
+     so no secret is stored for it;
+   - `release` creates the GitLab Release with the changelog section as its notes and links to the wheel, the sdist and
+     the two install scripts at that tag.
+4. Try the install on a clean machine: `sh install.sh x.y.z` (or `.\install.ps1 -Version x.y.z`) and `dynfarm --version`.
+
+The registry accepts a version once. If `publish` failed after uploading, do not re-run it: fix forward with the next
+patch version. A bad release is not deleted; it is superseded.
+
+`tools/check_tag.py vX.Y.Z` can be run locally before tagging: it says what would be refused. The install scripts and
+`tests/test_packaging.py` change together: the test pins what the scripts may and may not do (no token in a URL, the
+same registry, git address and index name in both, a version they refuse to pass on to a shell). The scripts are
+tested with a fake `uv`, `git` and `curl` for the shell one; `install.ps1` has no runner in CI, so it is checked
+statically, and a change to it needs a run on a real Windows machine before the tag.
