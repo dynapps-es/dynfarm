@@ -18,6 +18,10 @@ from dynfarm.context import AppContext
 #: name -> "module:attribute" of a click command or group. Order here is the order in `--help`.
 COMMANDS: dict[str, str] = {
     "auth": "dynfarm.commands.auth:auth",
+    "whoami": "dynfarm.commands.identity:whoami",
+    "plugin": "dynfarm.commands.identity:plugin",
+    "callback-key": "dynfarm.commands.identity:callback_key",
+    "api": "dynfarm.commands.api:api",
 }
 
 

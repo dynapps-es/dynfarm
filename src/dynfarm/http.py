@@ -27,6 +27,7 @@ import os
 import re
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
@@ -85,6 +86,15 @@ def parse_retry_after(value: str | None) -> float | None:
     return max(0.0, (when - datetime.now(UTC)).total_seconds())
 
 
+@dataclass(frozen=True)
+class Reply:
+    """What came back besides the body: the status line and the headers (the token masked, should the farm echo it)."""
+
+    status: int
+    reason: str
+    headers: list[tuple[str, str]]
+
+
 class FarmClient:
     """A client for one farm and one token. Build it with `with FarmClient(host, token) as client:`."""
 
@@ -105,6 +115,8 @@ class FarmClient:
         self._token = token or None
         self.debug = debug_from_env() if debug is None else debug
         self._sleep = sleep or time.sleep
+        #: Status and headers (token masked) of the last reply, error or not, for `dynfarm api --include`.
+        self.last_reply: Reply | None = None
         headers = {"User-Agent": _brand.user_agent(), "Accept": "application/json"}
         if self._token:
             headers["Authorization"] = f"Bearer {self._token}"
@@ -128,12 +140,14 @@ class FarmClient:
         *,
         params: dict[str, Any] | None = None,
         json: Any = None,
+        headers: dict[str, str] | None = None,
         operation_id: str | None = None,
     ) -> Any:
         """One API call; returns the parsed JSON body (`None` for an empty one) or raises `FarmError`.
 
         `path` is relative to `/farm/api/v1` and starts with `/`; escape variable parts with `segment()`.
-        `operation_id` only labels the debug line.
+        `headers` are extra request headers (only `dynfarm api -H` sets them; the caller has already refused
+        `Authorization`). `operation_id` only labels the debug line.
         """
         method = method.upper()
         if not path.startswith("/"):
@@ -142,7 +156,7 @@ class FarmClient:
         attempts = MAX_ATTEMPTS if method == "GET" else 1
         for attempt in range(1, attempts + 1):
             try:
-                return self._once(method, url, API_PREFIX + path, params, json, operation_id)
+                return self._once(method, url, API_PREFIX + path, params, json, headers, operation_id)
             except FarmError as exc:
                 if attempt == attempts or not exc.retryable:
                     raise
@@ -160,16 +174,22 @@ class FarmClient:
         shown_path: str,
         params: dict[str, Any] | None,
         body: Any,
+        headers: dict[str, str] | None,
         operation_id: str | None,
     ) -> Any:
         label = f"{method} {shown_path}" + (f" ({operation_id})" if operation_id else "")
         started = time.monotonic()
         try:
-            response = self._http.request(method, url, params=_query(params), json=body)
+            response = self._http.request(method, url, params=_query(params), json=body, headers=headers)
         except (httpx.HTTPError, httpx.InvalidURL) as exc:
             self._log(f"{label} -> connection failed in {_ms(started)} ms")
             raise self._network_error(method, exc) from None
         self._log(f"{label} -> {response.status_code} in {_ms(started)} ms")
+        self.last_reply = Reply(
+            response.status_code,
+            response.reason_phrase,
+            [(name, self._mask(value)) for name, value in response.headers.items()],
+        )
         if 200 <= response.status_code < 300:
             return self._success(response)
         raise self._error(response)

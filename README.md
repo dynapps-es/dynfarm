@@ -42,3 +42,41 @@ dynfarm auth logout --hostname https://other-farm.example.com
 
 Set `DYNFARM_HOST` and `DYNFARM_TOKEN` (a masked, protected CI variable) and run commands; no `auth login` needed.
 When `CI` is set, `dynfarm` never touches a keyring, not even to read.
+
+## Who you are, and what the farm offers
+
+```bash
+dynfarm whoami                 # subject, tenant, scopes and expiry of your token (--json for the farm's answer)
+dynfarm plugin list            # the plugins bundled in the agent image and the agents each brings (--json)
+dynfarm callback-key           # the public key that verifies task callbacks, as JSON
+dynfarm callback-key --pem     # only the PEM, ready for a file: dynfarm callback-key --pem > farm-callback.pem
+```
+
+`whoami` is the first thing to run when a command answers "not found" or "not allowed": a task, schedule or
+credential belongs to its owner, and the farm answers 404 for what is someone else's.
+
+## Raw API calls
+
+`dynfarm api` calls any endpoint of the farm's API and prints the JSON answer, like `gh api`. The path is relative to
+`/farm/api/v1` (a leading `/farm/api/v1` is accepted too). It is for scripts and for anything the other commands do
+not cover; it always prints JSON.
+
+```bash
+dynfarm api whoami
+dynfarm api -X GET tasks -f state=running -F limit=5        # fields are the query string on GET
+dynfarm api tasks --paginate -F limit=50                    # follow next_cursor, merge every page's items
+dynfarm api -X POST schedules/SCHEDULE_ID/pause
+dynfarm api tasks -f agent_id=developer-skills:code-reviewer -f prompt='review my change'   # POST: a JSON body
+echo '{"prompt": "...", "workspace": {"repo": "..."}}' | dynfarm api tasks --input -
+dynfarm api whoami -i                                       # status line and headers first
+```
+
+- `-f key=value` is a string field; `-F key=value` is typed (`true`, `false`, `null` and integers are converted,
+  `@file` or `@-` reads text from a file or standard input). Fields are the query string with `-X GET` and next to
+  an `--input` body; otherwise they are a JSON body, and giving fields without `-X` means `POST` (as in `gh api`).
+  Nested bodies go through `--input FILE|-`.
+- It never asks for confirmation, so `-X DELETE` works in scripts; `dynfarm ... delete` commands ask first.
+- The token always comes from the stored login. A full URL, a `..` segment or `-H Authorization: ...` is refused
+  (exit 2): `api` cannot send your token anywhere but the selected farm. `--hostname` picks another farm.
+- Exit codes are the usual ones: 1 when the farm answers an error, 4 for authentication, 2 for a bad invocation.
+  Do not pass a secret with `-f`: it would stay in your shell history. Credentials have their own command.
