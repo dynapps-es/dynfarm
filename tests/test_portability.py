@@ -67,7 +67,8 @@ def test_the_module_entry_point_runs_the_same_main_as_the_script(monkeypatch):
 
 def legacy_stream() -> tuple[io.BytesIO, io.TextIOWrapper]:
     raw = io.BytesIO()
-    return raw, io.TextIOWrapper(raw, encoding="cp1252", write_through=True)
+    # newline="\n": what is under test is the encoding; a Windows text stream would also turn "\n" into "\r\n".
+    return raw, io.TextIOWrapper(raw, encoding="cp1252", newline="\n", write_through=True)
 
 
 def test_a_legacy_code_page_standard_output_would_stop_on_a_name_from_the_farm_without_the_safeguard():
