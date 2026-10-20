@@ -196,6 +196,21 @@ class FakeFarm:
     def principal(self, token: str) -> Principal:
         return self.tokens[token]
 
+    def override(
+        self, operation_id: str, handler: Callable[[Call], tuple[int, Any]]
+    ) -> Callable[[Call], tuple[int, Any]]:
+        """Answer an operation differently: `handler(call) -> (status, body)` replaces the model's for this farm.
+
+        For the answer a test needs and the model never gives: a field the farm may add, a task that walks through
+        states while it is watched, an empty key list. Returns the handler it replaced, so the new one can wrap it:
+        `original = farm.override("whoami", lambda call: ...)`. The answer is still checked against the OpenAPI, and
+        the farm is per test, so nothing has to be undone. An unknown `operation_id` is an error, not a new route.
+        """
+        if operation_id not in self._handlers:
+            raise KeyError(f"no such operation: {operation_id}")
+        previous, self._handlers[operation_id] = self._handlers[operation_id], handler
+        return previous
+
     def take_violations(self) -> list[str]:
         """The recorded violations, cleared: a test that sends something invalid on purpose asserts them here."""
         taken, self.violations = self.violations, []
@@ -447,6 +462,12 @@ class FakeFarm:
         row = self._tasks.get(match.group(1)) if match else None
         if row is None or row.data["state"] != "succeeded":
             return httpx.Response(404, text="NoSuchKey", request=request)
+        return httpx.Response(
+            200, content=self._result_object(row), headers={"Content-Type": "application/json"}, request=request
+        )
+
+    def _result_object(self, row: TaskRow) -> bytes:
+        """The stored result file of a succeeded task: what the presigned URL serves, and what `sha256` hashes."""
         document = {
             "task_id": row.data["task_id"],
             "tenant": row.data["tenant"],
@@ -464,7 +485,7 @@ class FakeFarm:
         problems = self.openapi.validate({"$ref": "#/components/schemas/ResultDocument"}, document, [])
         if problems:
             raise FakeFarmBug(f"result document does not fit the OpenAPI: {[p.as_detail() for p in problems]}")
-        return httpx.Response(200, json=document, request=request)
+        return json.dumps(document, sort_keys=True).encode()
 
     # -- model helpers -----------------------------------------------------------------------------------------
 
@@ -736,10 +757,11 @@ class FakeFarm:
             raise ApiProblem(409, "task_not_terminal", "the task has not finished; wait for it with ?wait=")
         if d["state"] != "succeeded":
             raise ApiProblem(409, "task_has_no_result", f"the task {d['state']} and produced no result")  # invented
+        stored = self._result_object(row) if d["state"] == "succeeded" else b""
         result = {
             "s3_key": f"{d['tenant']}/tasks/{d['task_id']}/result.json",
-            "sha256": hashlib.sha256(d["task_id"].encode()).hexdigest(),
-            "size_bytes": 321,
+            "sha256": hashlib.sha256(stored).hexdigest(),
+            "size_bytes": len(stored),
             "content_type": "application/json",
             "url": f"{self.base_url}/_s3/{d['task_id']}/result.json?X-Signature=fake",
             "expires_at": self._ts(300),

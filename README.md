@@ -55,6 +55,44 @@ dynfarm callback-key --pem     # only the PEM, ready for a file: dynfarm callbac
 `whoami` is the first thing to run when a command answers "not found" or "not allowed": a task, schedule or
 credential belongs to its owner, and the farm answers 404 for what is someone else's.
 
+## Tasks
+
+A task is an agent working on something for you: a catalogue agent with an input, or a free prompt. Launch it, follow
+it to the end, read what it produced.
+
+```bash
+dynfarm task run developer-skills:code-reviewer --input "Review MR 42 of group/project." --watch
+dynfarm task run --prompt-file prompt.txt --scope docs --correlation-id nightly-docs-2026-10-20
+dynfarm task run --body-file task.json --exit-status      # a complete task as JSON; exits 1 unless it succeeds
+dynfarm task list --state running --state queued          # newest first; --all follows every page, --json for scripts
+dynfarm task view last                                    # `last` is the newest task you launched
+dynfarm task watch last --exit-status                     # waits on the farm; Ctrl-C stops watching, not the task
+dynfarm task logs last --tail 50
+dynfarm task result last --download result.json           # summary and link; --download saves the file
+dynfarm task cancel last                                  # asks first; --yes in scripts
+```
+
+- **What `run` sends.** An `AGENT` (an `agent_id`; it needs an `--input`) or a `--prompt`, never both, plus `--scope`
+  (your own label, a lowercase slug), `--session-ref` (continue a finished task's conversation) and
+  `--correlation-id` (an idempotency key: repeating it returns the existing task instead of launching another).
+  Anything else a task can carry — `workspace`, `marketplace`, `mcp_servers`, `limits`, `callback`, `image`, `services`
+  — goes in `--body-file FILE` (`-` for standard input), a complete task as JSON; the flags override its fields.
+  `--prompt-file` and `--input-file` read long or multi-line text from a file or from standard input. Contradictions
+  (an agent and a prompt, text given twice) are refused with exit 2 before anything is sent.
+- **The farm keeps the prompt and the input**, and they can end up in its logs: `run` says so on stderr. Keep secrets
+  out of them; credentials have their own command.
+- **A launch is never repeated by itself**, not even after a network error, because it might have gone through. Use
+  `--correlation-id` and run it again: the farm returns the first task if it did.
+- **`run` prints the id and state** (tab-separated when piped: `dynfarm task run ... | cut -f1` is the id) and, with
+  `--watch` or `--exit-status` (which implies it), follows the task. `watch` prints each change of state on stderr and
+  the finished task on stdout; it exits 0 for any end, or 1 unless `succeeded` with `--exit-status`. Ctrl-C stops
+  watching and exits 130; the task keeps running.
+- **`task result`** shows the summary, the usage and a link to the full result. `--download PATH` fetches it from the
+  object store without sending the farm's token, checks it against the farm's checksum, and will not replace an
+  existing file without `--force`. The link expires after a few minutes; run the command again for a new one.
+- **A task, schedule or credential that is somebody else's is a 404**, as everywhere in the farm: if `view` says "not
+  found" for an id you were given, it belongs to another person or tenant (`dynfarm whoami` says who you are).
+
 ## Raw API calls
 
 `dynfarm api` calls any endpoint of the farm's API and prints the JSON answer, like `gh api`. The path is relative to

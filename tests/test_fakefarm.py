@@ -1,6 +1,6 @@
 """The fake farm is held to the pinned OpenAPI and behaves like the real one where a client can tell.
 
-Every command test in phases 03-09 stands on the fake, so a fake that is looser than the real farm turns a CLI bug
+Every command test stands on the fake, so a fake that is looser than the real farm turns a CLI bug
 into a green test. These tests pin the properties the later phases rely on: every operation of the API is served,
 anything the contract forbids is refused *and recorded* (so a CLI that sends it fails its own test), identity and
 ownership follow `docs/farm-api.md` §3-4 (another tenant or another person is 404; expired is not invalid), errors
@@ -9,7 +9,10 @@ carry §15's envelope, and the same model answers over a real socket.
 
 from __future__ import annotations
 
+import hashlib
+
 import httpx
+import pytest
 from fakefarm import ADMIN, ALICE, BOB, EXPIRED, HOST, OTHER, READONLY, FakeFarm
 
 API = HOST + "/farm/api/v1"
@@ -412,3 +415,39 @@ def test_the_same_farm_answers_over_a_real_socket(fake_farm):
         assert created.status_code == 201
         assert httpx.get(url + "/openapi.json").status_code == 200
     assert fake_farm.base_url == HOST
+
+
+def test_a_test_can_override_one_operation_and_gets_back_the_one_it_replaced(fake_farm):
+    wrapped = {}
+
+    def zed(call):
+        status, body = wrapped["original"](call)  # wrapping the model's answer is the usual use
+        return status, {**body, "subject": "zed"}
+
+    wrapped["original"] = fake_farm.override("whoami", zed)
+    assert wrapped["original"] == fake_farm._op_whoami
+    assert call(fake_farm, "GET", "/whoami").json()["subject"] == "zed"
+    assert call(fake_farm, "GET", "/plugins").status_code == 200  # the other operations are untouched
+
+
+def test_an_override_is_still_held_to_the_openapi(fake_farm):
+    from fakefarm import FakeFarmBug
+
+    fake_farm.override("whoami", lambda call: (200, {"subject": 1}))
+    with pytest.raises(FakeFarmBug):
+        call(fake_farm, "GET", "/whoami")
+    fake_farm.bugs.clear()
+
+
+def test_overriding_an_operation_that_does_not_exist_is_an_error(fake_farm):
+    with pytest.raises(KeyError, match="no_such_operation"):
+        fake_farm.override("no_such_operation", lambda call: (200, {}))
+
+
+def test_the_result_checksum_and_size_describe_the_file_the_presigned_url_serves(fake_farm):
+    task_id = fake_farm.seed_task(ALICE, state="succeeded")
+    link = call(fake_farm, "GET", f"/tasks/{task_id}/result").json()["result"]
+    with httpx.Client(transport=fake_farm.transport()) as client:
+        stored = client.get(link["url"])
+    assert stored.status_code == 200
+    assert hashlib.sha256(stored.content).hexdigest() == link["sha256"] and len(stored.content) == link["size_bytes"]

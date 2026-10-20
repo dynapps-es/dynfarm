@@ -170,7 +170,7 @@ def test_paginate_leaves_an_answer_without_items_as_it_came(run_cli):
 
 
 def test_paginate_stops_with_an_error_when_the_farm_keeps_sending_the_same_cursor(run_cli, fake_farm):
-    fake_farm._handlers["list_tasks"] = lambda call: (200, {"items": [], "next_cursor": "same"})
+    fake_farm.override("list_tasks", lambda call: (200, {"items": [], "next_cursor": "same"}))
     result = run_cli(["api", "tasks", "--paginate"])
     assert result.exit_code == 1 and "pagination_loop" in result.stderr
     assert len([r for r in fake_farm.requests if r.path.endswith("/tasks")]) == 2

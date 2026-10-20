@@ -58,6 +58,10 @@ answer too, so a command that sends a field the API does not know fails its test
 - Arrange through the model (`fake_farm.seed_task(ALICE, state="running")`, `set_task`, `fail_next("get_task", ...)`)
   or through the API, then `result = run_cli(["task", "view", id])` and assert on `result.exit_code`, `result.stdout`,
   `result.stderr` and on `fake_farm.requests` (method, path, headers, body of everything that crossed the wire).
+- When a test needs an answer the model never gives (a field the farm may add, a task that moves through states while
+  it is watched, an empty list), `fake_farm.override("get_task", handler)` replaces one operation's handler
+  (`handler(call) -> (status, body)`) and returns the one it replaced, so it can wrap it. The answer is still checked
+  against the OpenAPI. Never reach into `fake_farm._handlers`.
 - A test that sends something invalid on purpose asserts `fake_farm.take_violations()`; any other leftover violation
   fails the test at teardown. For a real socket (the installed binary) use `with fake_farm.serve() as url:`.
 - Declare the API operations a command calls with `@operation("list_tasks")` (`dynfarm.registry`); the parity test reads it.

@@ -21,6 +21,7 @@ COMMANDS: dict[str, str] = {
     "whoami": "dynfarm.commands.identity:whoami",
     "plugin": "dynfarm.commands.identity:plugin",
     "callback-key": "dynfarm.commands.identity:callback_key",
+    "task": "dynfarm.commands.task:task",
     "api": "dynfarm.commands.api:api",
 }
 

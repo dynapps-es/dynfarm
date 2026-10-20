@@ -73,12 +73,9 @@ def test_whoami_shows_identity_fields_the_farm_adds_and_hides_the_empty_ones(run
         status, body = original(call)
         return status, {**body, "display_name": "Alice \x1b[31mA.", "email": "alice@example.test", "groups": None}
 
-    fake_farm._handlers["whoami"] = with_identity
-    try:
-        shown = fields(run_cli(["whoami"]))
-    finally:
-        fake_farm._handlers["whoami"] = original
-        fake_farm.take_violations()  # the pinned OpenAPI does not know these fields; the point is how they print
+    fake_farm.override("whoami", with_identity)
+    shown = fields(run_cli(["whoami"]))
+    fake_farm.take_violations()  # the pinned OpenAPI does not know these fields; the point is how they print
     assert shown["email"] == "alice@example.test"
     assert shown["display_name"] == "Alice  [31mA."  # the escape character is replaced, not printed
     assert "groups" not in shown
@@ -163,12 +160,8 @@ def test_callback_key_pem_prints_only_the_pem_ready_for_a_file(run_cli):
 
 
 def test_callback_key_pem_says_so_when_the_farm_sent_none(run_cli, fake_farm):
-    original = fake_farm._handlers["callback_key"]
-    fake_farm._handlers["callback_key"] = lambda call: (200, {"keys": []})
-    try:
-        result = run_cli(["callback-key", "--pem"])
-    finally:
-        fake_farm._handlers["callback_key"] = original
+    fake_farm.override("callback_key", lambda call: (200, {"keys": []}))
+    result = run_cli(["callback-key", "--pem"])
     assert result.exit_code == 1 and "no PEM key" in result.stderr
 
 

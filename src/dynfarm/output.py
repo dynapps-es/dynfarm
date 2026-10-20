@@ -40,6 +40,7 @@ class Column:
 
 
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_CONTROL_KEEPING_LAYOUT = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
 
 def use_color(stream: IO[str]) -> bool:
@@ -86,6 +87,15 @@ def emit(
     click.echo(_join(head, [_width(h) for h in headers], widths), file=stream)
     for line in cells:
         click.echo(_join(line, [_width(c) for c in line], widths), file=stream)
+
+
+def clean_text(text: str, *, multiline: bool = False) -> str:
+    """`text` from the farm or from other people, made safe to print: control characters become spaces.
+
+    With `multiline` the line breaks and tabs of a prompt or a log line stay, so it keeps its shape; the rest (escape
+    sequences included) cannot rewrite the person's terminal.
+    """
+    return (_CONTROL_KEEPING_LAYOUT if multiline else _CONTROL).sub(" ", text)
 
 
 def relative_time(when: datetime, now: datetime) -> str:

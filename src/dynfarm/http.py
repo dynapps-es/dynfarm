@@ -194,6 +194,32 @@ class FarmClient:
             return self._success(response)
         raise self._error(response)
 
+    def pages(
+        self, path: str, *, params: dict[str, Any] | None = None, operation_id: str | None = None
+    ) -> dict[str, Any]:
+        """Every page of a listing, merged: `{"items": [...], "next_cursor": None}`, following `next_cursor`.
+
+        `params` may carry a first `cursor` to start from. A farm that sends the same cursor twice would make this loop
+        forever, so it is stopped with `pagination_loop`.
+        """
+        items: list[Any] = []
+        seen: set[str] = set()
+        query = dict(params or {})
+        while True:
+            page = self.request("GET", path, params=query, operation_id=operation_id)
+            items.extend(page["items"])
+            cursor = page.get("next_cursor")
+            if not cursor:
+                return {**page, "items": items, "next_cursor": None}
+            if cursor in seen:
+                raise FarmError(200, "pagination_loop", f"the farm sent the cursor {cursor!r} twice; stopping")
+            seen.add(cursor)
+            query["cursor"] = cursor
+
+    def pause(self, seconds: float) -> None:
+        """Wait, through the same seam the retries use, so tests record the pause instead of sleeping it."""
+        self._sleep(seconds)
+
     # -- replies ----------------------------------------------------------------------------------------------
 
     def _success(self, response: httpx.Response) -> Any:
