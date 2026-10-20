@@ -66,3 +66,8 @@ answer too, so a command that sends a field the API does not know fails its test
 - A test that sends something invalid on purpose asserts `fake_farm.take_violations()`; any other leftover violation
   fails the test at teardown. For a real socket (the installed binary) use `with fake_farm.serve() as url:`.
 - Declare the API operations a command calls with `@operation("list_tasks")` (`dynfarm.registry`); the parity test reads it.
+- `tests/test_secret_leaks.py` runs the installed `dynfarm` (the script `pip install -e` puts next to the test's
+  python; the test fails, it does not skip, when it is missing) in a subprocess against `fake_farm.serve()`, with a
+  scrubbed environment (`CI=1`, a failing keyring backend, its own `HOME` and config dir, `NO_PROXY`). Any new way
+  for a secret to enter or leave the tool gets a test there: the sentinel must be in the body of `POST /credentials`
+  and in nothing else — output, `--debug`, files, other requests, argv.

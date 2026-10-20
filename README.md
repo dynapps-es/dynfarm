@@ -167,6 +167,55 @@ dynfarm schedule delete SCHEDULE_ID         # asks first; --yes in scripts
   already fired stay under `task list`.
 - Cron and timezone are the farm's to judge: `cron_invalid` and `timezone_invalid` are printed with its message.
 
+## Credentials (secrets)
+
+A credential is a secret the farm keeps for you — a git token, an API key, the URL of an MCP server — so a task or an
+agent can use it **by name** without the secret ever appearing in a prompt, a task or a log. The farm's channel is
+write-only: once stored, no command and no API call gives the value back, only its metadata and a `fingerprint` (a
+prefix of its SHA-256) to tell which one is stored. Handing over a secret is the one thing the farm's MCP does not do,
+on purpose: it must not pass through an LLM conversation. This command is how you do it.
+
+```bash
+dynfarm credential set git-readonly --type git_token                          # asks for it, hidden, twice
+dynfarm credential set git-readonly --type git_token --value-env GITLAB_TOKEN # from a variable you already have
+dynfarm credential set web-api --type generic --value-file ./web-api.key      # from a file
+pass show gitlab/readonly | dynfarm credential set git-readonly --type git_token   # from standard input
+dynfarm credential list                    # name, type, scope, fingerprint, expiry; --scope shared, --json
+dynfarm credential view git-readonly       # its metadata: type, fingerprint, description, metadata, dates
+dynfarm credential delete git-readonly     # asks first; --yes in scripts
+```
+
+- **The secret is never an argument.** There is no `--value` option: a command line stays in your shell history, is
+  visible to every process on the machine (`ps`) and is printed in CI job logs. `--value SECRET`, `--value=SECRET` or
+  the secret as an extra argument is refused (exit 2) without repeating it. The four ways in are:
+  1. **a hidden prompt**, on a terminal when no other source is given: asked twice, nothing is saved if the two differ;
+  2. **standard input**, when it is not a terminal (or `--value-file -`): a pipe, a heredoc, a password manager;
+  3. **`--value-file FILE`**: the file's content;
+  4. **`--value-env VARIABLE`**: the content of an environment variable (in CI, a masked variable). Only the
+     variable's name is on the command line; an unset variable is an error that names it, never its content.
+
+  One trailing line break is removed from standard input and from a file (the one `echo` or an editor adds), nothing
+  else; the environment variable is taken as it is. An empty value is refused before anything is sent.
+- **Where the secret goes**: into the body of the one `POST /credentials`, and nowhere else. `dynfarm` does not print
+  it, does not write it to any file, and `--debug` never shows a request body or header. A failed write is not
+  repeated by itself (the error says when it is safe to repeat it). Tests check all of this on the installed binary
+  over a real socket with a sentinel secret.
+- **`--type`** is one of `git_token`, `s3`, `model_gateway_key`, `webhook_hmac`, `generic`, `mcp_url` and `mcp_token`,
+  checked before the secret is asked for. An `mcp_url` must be a whole `https` URL (`credential_value_invalid`
+  otherwise; the farm never echoes the rejected value). `--description`, `--metadata KEY=VALUE` (repeatable) and
+  `--expires-at` are **not secret**: the farm shows them to whoever can list the credential.
+- **Rotation**: `set` with a name you already have replaces the secret and says `Rotated`; a new name says `Saved`.
+  Both print the fingerprint, so you can check which secret is stored without seeing it. A rotation keeps the
+  description unless you give a new one (`--description ""` clears it).
+- **Deletion** removes the secret and its metadata. Tasks already running keep the copy they were given; the next
+  task or schedule that names the credential fails until it is written again.
+- **Personal and shared**: a credential is yours by default (`--scope personal`); another person's is a 404, as
+  everything in the farm. `--scope shared` stores one for the whole team, which only a tenant admin may write, rotate
+  or delete (`insufficient_scope` otherwise); everybody in the tenant can list it, nobody can read it, and the team's
+  agents refer to it as `shared:<name>`.
+- Store the narrowest secret that does the job (a read-only, short-lived token): the farm hands it to the agents
+  that name it, and an agent can be talked into showing what it holds.
+
 ## Raw API calls
 
 `dynfarm api` calls any endpoint of the farm's API and prints the JSON answer, like `gh api`. The path is relative to
