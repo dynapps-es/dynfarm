@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_the_console_script_is_named_after_the_brand_constant():
-    scripts = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["scripts"]
+    scripts = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["scripts"]
     assert list(scripts) == [_brand.NAME]
     assert scripts[_brand.NAME] == "dynfarm.cli:main"
 

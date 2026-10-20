@@ -66,7 +66,7 @@ def serving(*answers: tuple[int, bytes]) -> Iterator[tuple[str, list[str]]]:
 
 
 def test_a_pretty_download_of_the_pinned_document_is_byte_identical_to_the_fixture(tool, tmp_path):
-    compact = json.dumps(json.loads(FIXTURE.read_text())).encode()
+    compact = json.dumps(json.loads(FIXTURE.read_text(encoding="utf-8"))).encode()
     destination = tmp_path / "openapi.json"
     with serving((200, compact)) as (url, _):
         assert tool.main([url, str(destination), "--pretty"]) == 0
@@ -77,7 +77,7 @@ def test_a_download_without_pretty_keeps_the_document_as_the_farm_sent_it(tool, 
     destination = tmp_path / "live.json"
     with serving((200, FIXTURE.read_bytes())) as (url, _):
         assert tool.main([url, str(destination)]) == 0
-    assert json.loads(destination.read_text()) == json.loads(FIXTURE.read_text())
+    assert json.loads(destination.read_text(encoding="utf-8")) == json.loads(FIXTURE.read_text(encoding="utf-8"))
 
 
 @pytest.mark.parametrize(

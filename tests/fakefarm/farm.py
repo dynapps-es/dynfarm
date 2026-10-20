@@ -146,7 +146,7 @@ class TaskRow:
 
 class FakeFarm:
     def __init__(self) -> None:
-        self.openapi = Openapi(json.loads(FIXTURE.read_text()))
+        self.openapi = Openapi(json.loads(FIXTURE.read_text(encoding="utf-8")))
         self.tokens: dict[str, Principal] = _principals()
         self.now = datetime(2026, 10, 20, 12, 0, 0, tzinfo=UTC)
         self.requests: list[Recorded] = []

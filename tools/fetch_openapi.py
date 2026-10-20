@@ -70,7 +70,8 @@ def main(argv: list[str] | None = None) -> int:
         text = json.dumps(document, indent=2, sort_keys=True) + "\n"
     else:
         text = json.dumps(document)
-    args.dest.write_text(text)
+    # Both explicit: the default encoding and line ending of a Windows machine would rewrite the pinned bytes.
+    args.dest.write_text(text, encoding="utf-8", newline="\n")
     operations = sum(1 for item in document["paths"].values() for method in item if method != "parameters")
     print(f"fetch_openapi: saved {args.dest} ({operations} operations, openapi {document['openapi']})")
     return 0

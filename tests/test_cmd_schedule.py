@@ -101,7 +101,7 @@ def test_create_prints_the_id_state_and_cron_as_a_row_and_hints_how_to_pause(run
 
 def test_create_a_free_prompt_schedule_reads_the_prompt_from_a_file(run_cli, fake_farm, tmp_path):
     prompt = tmp_path / "digest.txt"
-    prompt.write_text("Summarise the week.\nBe brief.\n")
+    prompt.write_text("Summarise the week.\nBe brief.\n", encoding="utf-8")
     result = run_cli(
         create_args("--prompt-file", str(prompt), "--scope", "docs", "--cron", "0 7 * * 1", "--timezone", "UTC")
     )
@@ -115,8 +115,10 @@ def test_create_a_free_prompt_schedule_reads_the_prompt_from_a_file(run_cli, fak
 
 def test_create_takes_the_task_from_a_body_file_and_the_recurrence_from_a_recurrence_file(run_cli, fake_farm, tmp_path):
     task_file, recurrence_file = tmp_path / "task.json", tmp_path / "recurrence.json"
-    task_file.write_text(json.dumps({"agent_id": REVIEWER, "input": "Review.", "limits": {"timeout_s": 600}}))
-    recurrence_file.write_text(json.dumps({"cron": "30 6 * * *", "timezone": "UTC", "max_runs": 5}))
+    task_file.write_text(
+        json.dumps({"agent_id": REVIEWER, "input": "Review.", "limits": {"timeout_s": 600}}), encoding="utf-8"
+    )
+    recurrence_file.write_text(json.dumps({"cron": "30 6 * * *", "timezone": "UTC", "max_runs": 5}), encoding="utf-8")
     result = run_cli(create_args("--body-file", str(task_file), "--recurrence-file", str(recurrence_file)))
     assert result.exit_code == 0, result.output
     assert body_of(sent(fake_farm, "create_schedule")[0]) == {
@@ -127,7 +129,7 @@ def test_create_takes_the_task_from_a_body_file_and_the_recurrence_from_a_recurr
 
 def test_create_flags_override_the_same_fields_of_the_recurrence_file(run_cli, fake_farm, tmp_path):
     recurrence_file = tmp_path / "recurrence.json"
-    recurrence_file.write_text(json.dumps({"cron": "30 6 * * *", "timezone": "UTC", "max_runs": 5}))
+    recurrence_file.write_text(json.dumps({"cron": "30 6 * * *", "timezone": "UTC", "max_runs": 5}), encoding="utf-8")
     run_cli(
         create_args(
             REVIEWER,
@@ -225,7 +227,7 @@ def test_create_lets_only_one_input_read_standard_input(run_cli, fake_farm):
 
 def test_create_refuses_a_recurrence_file_that_is_not_a_json_object_without_quoting_it(run_cli, fake_farm, tmp_path):
     bad = tmp_path / "recurrence.json"
-    bad.write_text('["0 8 * * *", "secret-looking-text"]')
+    bad.write_text('["0 8 * * *", "secret-looking-text"]', encoding="utf-8")
     result = run_cli(create_args(REVIEWER, "--input", "x", "--recurrence-file", str(bad)))
     assert result.exit_code == 2 and "must hold a JSON object" in result.stderr
     assert "secret-looking-text" not in result.output and fake_farm.requests == []

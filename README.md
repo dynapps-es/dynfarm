@@ -17,6 +17,17 @@ pipx install dynfarm          # the same idea, with pipx
 pip install dynfarm           # into the Python environment that is active
 ```
 
+On Windows, `py -m pip install dynfarm` works as well, but `pip` puts the `dynfarm.exe` launcher in a `Scripts`
+folder that a fresh Python does not add to `PATH`, so the install can seem to have done nothing. `uv tool install
+dynfarm` and `pipx install dynfarm` take care of that and are the better way in. Whenever `dynfarm` is not found, the
+same command is one `python -m` away, with no `PATH` involved:
+
+```powershell
+py -m dynfarm --version     # or: python -m dynfarm ...  (python3 -m dynfarm on macOS and Linux)
+```
+
+`dynfarm` runs on Linux, macOS and Windows; its test suite runs on all three.
+
 If you have none of those tools, the install script puts [`uv`](https://docs.astral.sh/uv/) in place when it is
 missing, then installs `dynfarm` with it and runs `dynfarm --version`:
 
@@ -84,7 +95,8 @@ dynfarm auth logout --hostname https://other-farm.example.com
 - **Where the token is kept**: in the system keyring (macOS Keychain, Windows Credential Manager, Secret Service on
   Linux), under the service `dynfarm` and the farm's URL. With `--insecure-storage`, or when the machine has no
   keyring, it goes in plain text into `config.toml` in the config directory (`DYNFARM_CONFIG_DIR`, by default the
-  OS's per-user config directory), readable only by you, and `dynfarm` warns you when it falls back to it.
+  OS's per-user config directory), readable only by you (on Windows, by the permissions of your profile folder, which
+  only you and administrators can open), and `dynfarm` warns you when it falls back to it.
 - **Where the token is looked for**, first answer wins: `DYNFARM_TOKEN`, the keyring, the config file.
   `DYNFARM_TOKEN` answers for whichever farm a command talks to. Every environment variable of `dynfarm` starts with
   `DYNFARM_`: the variables of other tools, such as another client's token or URL variables, are not read, so a token

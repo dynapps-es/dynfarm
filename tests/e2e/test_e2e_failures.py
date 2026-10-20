@@ -84,7 +84,8 @@ def test_a_read_that_hits_a_full_quota_waits_the_retry_after_and_succeeds(dynfar
     run = dynfarm.run("task", "list", "--json", env={"DYNFARM_TOKEN": ALICE})
     assert run.code == 0, run.output
     assert [r.status for r in fake_farm.requests] == [429, 200]
-    assert run.seconds >= 1.0  # the pause was real
+    # The pause was real. Not `>= 1.0`: a Windows sleep of one second is measured as 0.98 now and then.
+    assert run.seconds >= 0.9
     assert run.json()["items"] == []
 
 
@@ -128,3 +129,14 @@ def test_destructive_commands_without_a_terminal_and_without_yes_refuse_and_send
         assert run.code == 2 and "--yes" in run.stderr, (args, run.output)
     assert fake_farm.requests == []
     assert logged_in.run("whoami").code == 0  # and the refused logout kept the token
+
+
+def test_a_character_the_terminal_cannot_show_is_escaped_and_the_command_still_succeeds(logged_in, fake_farm):
+    """A piped output on Windows has a legacy code page; `cp1252` reproduces it on any machine (not `ascii`, which
+    click treats as misconfigured and works around by itself). Without the safeguard in `dynfarm.cli.main` the logs
+    would be fetched and then the command would die with a traceback."""
+    task_id = fake_farm.seed_task(ALICE, state="succeeded", logs=["deploy 日本 done"])
+    run = logged_in.run("task", "logs", task_id, env={"PYTHONUTF8": "0", "PYTHONIOENCODING": "cp1252"})
+    assert run.code == 0, run.output
+    assert "deploy \\u65e5\\u672c done" in run.stdout
+    no_traceback(run)

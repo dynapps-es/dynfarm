@@ -11,6 +11,9 @@
 # public GitHub repository, whose `release.yml` publishes a tag to PyPI. `check-tag` is that workflow's first gate run
 # here too, so a bad tag shows red on GitLab as well. See "Releasing" in CONTRIBUTING.md.
 #
+# The runners here are Linux only. The suite runs on Windows and macOS too, in `.github/workflows/ci.yml` on the public
+# mirror, and a release waits for it (see "CI" in CONTRIBUTING.md).
+#
 # `api-drift` is the only job that touches a farm, and it only downloads a public document: the CI holds no farm token
 # and must not get one. The live smoke test with a real token runs from a developer's machine.
 
@@ -114,6 +117,7 @@ package:
     - .from-wheel/bin/pip install -q dist/*.whl
     - .from-wheel/bin/pip check
     - .from-wheel/bin/dynfarm --version
+    - .from-wheel/bin/python -m dynfarm --version
     - .from-wheel/bin/dynfarm --help
     - .from-wheel/bin/dynfarm task --help
     - .from-wheel/bin/dynfarm completion zsh > /dev/null

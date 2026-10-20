@@ -76,7 +76,7 @@ def load_spec(path: str | Path | None) -> dict[str, Any]:
     """The OpenAPI document at `path` (the pinned one when `path` is None); an unreadable file is an error."""
     target = Path(path) if path else PINNED
     try:
-        return json.loads(target.read_text())
+        return json.loads(target.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise RuntimeError(f"cannot read the OpenAPI document {target}: {exc}") from exc
 
@@ -479,7 +479,7 @@ def test_an_unreadable_openapi_file_is_an_error_not_a_fallback(tmp_path):
     with pytest.raises(RuntimeError, match="cannot read the OpenAPI document"):
         load_spec(tmp_path / "missing.json")
     broken = tmp_path / "broken.json"
-    broken.write_text("{not json")
+    broken.write_text("{not json", encoding="utf-8")
     with pytest.raises(RuntimeError, match="cannot read the OpenAPI document"):
         load_spec(broken)
 

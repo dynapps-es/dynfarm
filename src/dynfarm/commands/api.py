@@ -185,7 +185,8 @@ def _typed(value: str, *, uses_stdin: bool) -> Any:
 
 def _read_text(flag: str, source: str) -> str:
     try:
-        return Path(source).expanduser().read_text(encoding="utf-8")
+        # `utf-8-sig`: a file saved by a Windows editor starts with a byte-order mark that is not part of the text.
+        return Path(source).expanduser().read_text(encoding="utf-8-sig")
     except (OSError, UnicodeDecodeError) as exc:
         raise ConfigError(f"{flag}: cannot read {source}: {exc.__class__.__name__}") from None
 

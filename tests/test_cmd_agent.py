@@ -295,7 +295,7 @@ def test_create_takes_everything_without_a_flag_from_a_file(run_cli, fake_farm, 
         "mcp_servers": [{"name": "docs", "credential": "mcp-docs"}],
     }
     path = tmp_path / "etl.json"
-    path.write_text(json.dumps(document))
+    path.write_text(json.dumps(document), encoding="utf-8")
     result = run_cli(["agent", "create", "etl", "--from-file", str(path)])
     assert result.exit_code == 0, result.output
     assert body_of(sent(fake_farm, "create_agent")[0]) == {"slug": "etl", **document}
@@ -303,7 +303,9 @@ def test_create_takes_everything_without_a_flag_from_a_file(run_cli, fake_farm, 
 
 def test_create_flags_override_the_same_fields_of_the_file(run_cli, fake_farm, tmp_path):
     path = tmp_path / "a.json"
-    path.write_text(json.dumps({"scope": "personal", "description": "from file", "instructions": "from file"}))
+    path.write_text(
+        json.dumps({"scope": "personal", "description": "from file", "instructions": "from file"}), encoding="utf-8"
+    )
     run_cli(
         ["agent", "create", "mine", "--from-file", str(path), "--description", "from flag", "--scope", "team"],
         token=ADMIN,
@@ -324,7 +326,7 @@ def test_create_reads_the_whole_agent_from_standard_input_with_a_dash(run_cli, f
 
 def test_create_reads_the_instructions_from_a_file_without_its_final_newline(run_cli, fake_farm, tmp_path):
     path = tmp_path / "instructions.md"
-    path.write_text("Line one.\nLine two.\n")
+    path.write_text("Line one.\nLine two.\n", encoding="utf-8")
     run_cli(["agent", "create", "mine", "--scope", "personal", "--instructions-file", str(path)])
     assert body_of(sent(fake_farm, "create_agent")[0])["instructions"] == "Line one.\nLine two."
 
@@ -351,8 +353,8 @@ def test_create_refuses_what_cannot_be_an_agent_with_exit_2_before_any_request(r
 
 def test_create_refuses_a_file_that_is_not_a_json_object_without_quoting_it(run_cli, fake_farm, tmp_path):
     broken, listing = tmp_path / "broken.json", tmp_path / "list.json"
-    broken.write_text('{"instructions": "SECRET-LOOKING-TEXT"')
-    listing.write_text('["SECRET-LOOKING-TEXT"]')
+    broken.write_text('{"instructions": "SECRET-LOOKING-TEXT"', encoding="utf-8")
+    listing.write_text('["SECRET-LOOKING-TEXT"]', encoding="utf-8")
     first = run_cli(["agent", "create", "mine", "--from-file", str(broken)])
     second = run_cli(["agent", "create", "mine", "--from-file", str(listing)])
     assert first.exit_code == 2 and "not valid JSON" in first.stderr and "SECRET-LOOKING-TEXT" not in first.stderr
@@ -422,7 +424,7 @@ def test_edit_sends_a_patch_to_the_slug_without_a_scope_when_none_was_given(run_
 def test_edit_takes_instructions_from_a_file_and_workspace_from_a_flag(run_cli, fake_farm, tmp_path):
     make(fake_farm, ALICE, "mine", instructions="old")
     path = tmp_path / "i.md"
-    path.write_text("Brand new.\n")
+    path.write_text("Brand new.\n", encoding="utf-8")
     run_cli(["agent", "edit", "mine", "--instructions-file", str(path), "--no-requires-workspace"])
     assert body_of(sent(fake_farm, "update_agent")[0]) == {"instructions": "Brand new.", "requires_workspace": False}
 
@@ -438,7 +440,7 @@ def test_edit_clears_a_field_with_null_in_a_file(run_cli, fake_farm):
 def test_edit_flags_override_the_file(run_cli, fake_farm, tmp_path):
     make(fake_farm, ALICE, "mine")
     path = tmp_path / "e.json"
-    path.write_text(json.dumps({"description": "file", "credentials": ["git-readonly"]}))
+    path.write_text(json.dumps({"description": "file", "credentials": ["git-readonly"]}), encoding="utf-8")
     run_cli(["agent", "edit", "mine", "--from-file", str(path), "--description", "flag"])
     assert body_of(sent(fake_farm, "update_agent")[0]) == {"description": "flag", "credentials": ["git-readonly"]}
 
@@ -446,7 +448,7 @@ def test_edit_flags_override_the_file(run_cli, fake_farm, tmp_path):
 def test_edit_with_nothing_to_change_exits_2_without_a_request(run_cli, fake_farm, tmp_path):
     make(fake_farm, ALICE, "mine")
     empty = tmp_path / "empty.json"
-    empty.write_text("{}")
+    empty.write_text("{}", encoding="utf-8")
     for args in (["agent", "edit", "mine"], ["agent", "edit", "mine", "--from-file", str(empty)]):
         result = run_cli(args)
         assert result.exit_code == 2 and "nothing to change" in result.stderr
@@ -463,7 +465,7 @@ def test_edit_scope_alone_is_not_a_change(run_cli, fake_farm):
 def test_edit_refuses_a_file_that_tries_to_change_the_slug_or_the_scope(run_cli, fake_farm, tmp_path, fixed):
     make(fake_farm, ALICE, "mine")
     path = tmp_path / "e.json"
-    path.write_text(json.dumps({fixed: "personal", "description": "x"}))
+    path.write_text(json.dumps({fixed: "personal", "description": "x"}), encoding="utf-8")
     result = run_cli(["agent", "edit", "mine", "--from-file", str(path)])
     assert result.exit_code == 2 and f"{fixed} of an agent never changes" in result.stderr
     assert fake_farm.requests == []

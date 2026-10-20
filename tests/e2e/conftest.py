@@ -16,10 +16,7 @@ in the developer's shell does not swallow the loopback requests. Tokens are the 
 from __future__ import annotations
 
 import json
-import os
-import shutil
 import subprocess
-import sys
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -27,19 +24,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from childproc import child_environment, installed_binary
 from fakefarm import ALICE, FakeFarm
 
-from dynfarm import _brand
-
 TIMEOUT = 60
-
-
-def installed_binary() -> str:
-    """The `dynfarm` script of the environment running the tests; a missing one fails the test, it does not skip it."""
-    found = shutil.which(_brand.NAME, path=str(Path(sys.executable).parent))
-    if found is None:
-        pytest.fail(f"no `{_brand.NAME}` next to {sys.executable}: install the package in this environment first")
-    return found
 
 
 @dataclass
@@ -69,24 +57,7 @@ class Installed:
     runs: list[Run] = field(default_factory=list)
 
     def env(self, extra: dict[str, str] | None = None) -> dict[str, str]:
-        (self.home / "tmp").mkdir(parents=True, exist_ok=True)
-        env = {
-            "PATH": os.environ.get("PATH", os.defpath),
-            "HOME": str(self.home),
-            "USERPROFILE": str(self.home),
-            "XDG_CONFIG_HOME": str(self.home / ".config"),
-            "XDG_DATA_HOME": str(self.home / ".local" / "share"),
-            "TMPDIR": str(self.home / "tmp"),
-            "PYTHONUTF8": "1",
-            "CI": "1",
-            "PYTHON_KEYRING_BACKEND": "keyring.backends.fail.Keyring",
-            "NO_PROXY": "127.0.0.1,localhost",
-            "no_proxy": "127.0.0.1,localhost",
-            _brand.env("CONFIG_DIR"): str(self.config_dir),
-            _brand.env("HOST"): self.url,
-        }
-        env.update(extra or {})
-        return env
+        return child_environment(self.home, self.config_dir, self.url, extra)
 
     def run(self, *args: str, input: str | None = None, env: dict[str, str] | None = None) -> Run:
         """Run `dynfarm ARGS`; the standard input is `input` (a closed, empty pipe by default: not a terminal)."""

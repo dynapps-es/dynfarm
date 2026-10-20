@@ -24,7 +24,6 @@ from __future__ import annotations
 import json
 import os
 import select
-import shutil
 import subprocess
 import sys
 import time
@@ -33,20 +32,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from childproc import child_environment, installed_binary
 from fakefarm import ADMIN, ALICE, ApiProblem
-
-from dynfarm import _brand
 
 CREDENTIALS = "/farm/api/v1/credentials"
 TIMEOUT = 30
-
-
-def installed_binary() -> str:
-    """The `dynfarm` script of the environment running the tests (`pip install -e .` puts it next to the python)."""
-    found = shutil.which(_brand.NAME, path=str(Path(sys.executable).parent))
-    if found is None:  # not a skip: a leak test that cannot run is a failure
-        pytest.fail(f"no `{_brand.NAME}` next to {sys.executable}: run `pip install -e '.[dev]'` in this environment")
-    return found
 
 
 def sentinel() -> str:
@@ -77,24 +67,7 @@ class Child:
         self.runs: list[Run] = []
 
     def env(self, extra: dict[str, str] | None = None) -> dict[str, str]:
-        env = {
-            "PATH": os.environ.get("PATH", os.defpath),
-            "HOME": str(self.home),
-            "USERPROFILE": str(self.home),
-            "XDG_CONFIG_HOME": str(self.home / ".config"),
-            "XDG_DATA_HOME": str(self.home / ".local" / "share"),
-            "TMPDIR": str(self.home / "tmp"),
-            "PYTHONUTF8": "1",
-            "CI": "1",
-            "PYTHON_KEYRING_BACKEND": "keyring.backends.fail.Keyring",
-            "NO_PROXY": "127.0.0.1,localhost",
-            "no_proxy": "127.0.0.1,localhost",
-            _brand.env("CONFIG_DIR"): str(self.config_dir),
-            _brand.env("HOST"): self.url,
-        }
-        (self.home / "tmp").mkdir(exist_ok=True)
-        env.update(extra or {})
-        return env
+        return child_environment(self.home, self.config_dir, self.url, extra)
 
     def run(self, *args: str, input: str | None = None, env: dict[str, str] | None = None) -> Run:
         argv = [self.binary, *args]
@@ -169,7 +142,7 @@ def test_a_secret_in_a_value_file_reaches_only_the_body_of_the_post_and_argv_hol
 ):
     secret = sentinel()
     secret_file = tmp_path / "secret.txt"
-    secret_file.write_text(secret + "\n")
+    secret_file.write_bytes(secret.encode() + b"\n")
     run = child.run(
         "--debug", "credential", "set", "git-readonly", "--type", "git_token", "--value-file", str(secret_file)
     )
@@ -208,7 +181,7 @@ def test_a_secret_in_an_environment_variable_reaches_only_the_body_of_the_post_a
     assert_contained(child, secret)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="pseudo-terminals are POSIX; CI runs on Linux")
+@pytest.mark.skipif(sys.platform == "win32", reason="pseudo-terminals are POSIX; Windows has no pty to drive")
 def test_a_secret_typed_at_the_hidden_prompt_is_never_echoed_by_the_terminal(child, fake_farm):
     """On a real pseudo-terminal, the terminal driver echoes whatever is typed unless the prompt turned echo off: the
     transcript of everything the terminal showed must not hold the secret."""

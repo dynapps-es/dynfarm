@@ -117,8 +117,8 @@ def test_run_does_not_warn_about_stored_text_when_it_sends_none(run_cli):
 
 
 def test_run_reads_the_prompt_and_the_input_from_files_without_their_final_newline(run_cli, fake_farm, tmp_path):
-    (tmp_path / "prompt.txt").write_text("Line one\nline two\n")
-    (tmp_path / "input.txt").write_text("the context\r\n")
+    (tmp_path / "prompt.txt").write_text("Line one\nline two\n", encoding="utf-8")
+    (tmp_path / "input.txt").write_bytes(b"the context\r\n")  # bytes: exact on every OS
     result = run_cli(
         ["task", "run", "--prompt-file", str(tmp_path / "prompt.txt"), "--input-file", str(tmp_path / "input.txt")]
     )
@@ -154,7 +154,7 @@ def test_run_takes_what_has_no_flag_from_a_body_file(run_cli, fake_farm, tmp_pat
         "limits": {"timeout_s": 600},
         "callback": {"url": "https://ci.example.test/hook"},
     }
-    (tmp_path / "task.json").write_text(json.dumps(spec))
+    (tmp_path / "task.json").write_text(json.dumps(spec), encoding="utf-8")
     result = run_cli(["task", "run", "--body-file", str(tmp_path / "task.json")])
     assert result.exit_code == 0, result.output
     assert body_of(sent(fake_farm, "create_task")[0]) == spec
@@ -162,7 +162,7 @@ def test_run_takes_what_has_no_flag_from_a_body_file(run_cli, fake_farm, tmp_pat
 
 def test_run_flags_override_the_same_fields_of_the_body_file(run_cli, fake_farm, tmp_path):
     spec = {"agent_id": "repo-helper", "input": "from the file", "scope": "old", "limits": {"timeout_s": 600}}
-    (tmp_path / "task.json").write_text(json.dumps(spec))
+    (tmp_path / "task.json").write_text(json.dumps(spec), encoding="utf-8")
     result = run_cli(
         [
             "task",
@@ -223,8 +223,8 @@ def test_run_refuses_a_contradiction_with_exit_2_before_any_request(run_cli, fak
 
 
 def test_run_refuses_a_body_file_that_is_not_a_json_object_without_quoting_it(run_cli, fake_farm, tmp_path):
-    (tmp_path / "bad.json").write_text('{"prompt": "SECRET-LOOKING-TEXT" oops}')
-    (tmp_path / "list.json").write_text('["prompt"]')
+    (tmp_path / "bad.json").write_text('{"prompt": "SECRET-LOOKING-TEXT" oops}', encoding="utf-8")
+    (tmp_path / "list.json").write_text('["prompt"]', encoding="utf-8")
     bad = run_cli(["task", "run", "--body-file", str(tmp_path / "bad.json")])
     not_object = run_cli(["task", "run", "--body-file", str(tmp_path / "list.json")])
     assert bad.exit_code == 2 and "not valid JSON" in bad.stderr and "SECRET-LOOKING-TEXT" not in bad.stderr
@@ -233,7 +233,7 @@ def test_run_refuses_a_body_file_that_is_not_a_json_object_without_quoting_it(ru
 
 
 def test_run_refuses_a_prompt_flag_on_top_of_a_body_file_that_names_an_agent(run_cli, fake_farm, tmp_path):
-    (tmp_path / "task.json").write_text(json.dumps({"agent_id": REVIEWER, "input": "x"}))
+    (tmp_path / "task.json").write_text(json.dumps({"agent_id": REVIEWER, "input": "x"}), encoding="utf-8")
     result = run_cli(["task", "run", "--prompt", "also", "--body-file", str(tmp_path / "task.json")])
     assert result.exit_code == 2 and "not both" in result.stderr
     assert fake_farm.requests == []
@@ -670,7 +670,7 @@ def test_result_download_saves_the_file_and_never_sends_the_farms_token_to_the_s
     target = tmp_path / "result.json"
     result = run_cli(["task", "result", task_id, "--download", str(target)])
     assert result.exit_code == 0, result.output
-    assert json.loads(target.read_text())["result"] == "The change looks fine."
+    assert json.loads(target.read_text(encoding="utf-8"))["result"] == "The change looks fine."
     assert f"saved {target.stat().st_size} bytes" in result.stderr
     store = [r for r in fake_farm.requests if r.path.startswith("/_s3/")]
     assert len(store) == 1
@@ -681,18 +681,18 @@ def test_result_download_saves_the_file_and_never_sends_the_farms_token_to_the_s
 def test_result_download_refuses_to_overwrite_without_force_and_asks_the_farm_nothing(run_cli, fake_farm, tmp_path):
     task_id = fake_farm.seed_task(ALICE, state="succeeded")
     target = tmp_path / "result.json"
-    target.write_text("keep me")
+    target.write_text("keep me", encoding="utf-8")
     result = run_cli(["task", "result", task_id, "--download", str(target)])
     assert result.exit_code == 2 and "--force" in result.stderr
-    assert target.read_text() == "keep me" and fake_farm.requests == []
+    assert target.read_text(encoding="utf-8") == "keep me" and fake_farm.requests == []
 
 
 def test_result_download_replaces_the_file_with_force(run_cli, fake_farm, tmp_path):
     task_id = fake_farm.seed_task(ALICE, state="succeeded")
     target = tmp_path / "result.json"
-    target.write_text("old")
+    target.write_text("old", encoding="utf-8")
     assert run_cli(["task", "result", task_id, "--download", str(target), "--force"]).exit_code == 0
-    assert json.loads(target.read_text())["task_id"] == task_id
+    assert json.loads(target.read_text(encoding="utf-8"))["task_id"] == task_id
 
 
 def test_result_download_into_a_missing_directory_is_refused_before_asking(run_cli, fake_farm, tmp_path):
@@ -744,7 +744,7 @@ def test_result_download_over_a_real_socket_sends_no_authorization_either(fake_f
         app = AppContext(token_provider=lambda host: ALICE)
         result = CliRunner().invoke(cli, ["task", "result", task_id, "--download", str(target)], obj=app)
     assert result.exit_code == 0, result.output
-    assert json.loads(target.read_text())["task_id"] == task_id
+    assert json.loads(target.read_text(encoding="utf-8"))["task_id"] == task_id
     store = [r for r in fake_farm.requests if r.path.startswith("/_s3/")]
     assert len(store) == 1 and "authorization" not in store[0].headers
 

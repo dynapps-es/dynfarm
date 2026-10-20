@@ -238,11 +238,11 @@ def scan_repository() -> tuple[list[Found], list[str]]:
     found: list[Found] = []
     dynamic: list[str] = []
     for path in sorted(SRC.rglob("*.py")):
-        names, unresolved = python_variables(path.read_text(), str(path.relative_to(ROOT)))
+        names, unresolved = python_variables(path.read_text(encoding="utf-8"), str(path.relative_to(ROOT)))
         found += names
         dynamic += unresolved
-    found += sh_variables(INSTALL_SH.read_text(), "install.sh")
-    found += ps1_variables(INSTALL_PS1.read_text(), "install.ps1")
+    found += sh_variables(INSTALL_SH.read_text(encoding="utf-8"), "install.sh")
+    found += ps1_variables(INSTALL_PS1.read_text(encoding="utf-8"), "install.ps1")
     return found, dynamic
 
 
@@ -404,7 +404,7 @@ def test_the_removed_variables_appear_nowhere_a_person_or_a_script_reads():
     scanned = sorted(SRC.rglob("*.py")) + [INSTALL_SH, INSTALL_PS1, ROOT / "README.md"]
     assert len(scanned) > 10
     for path in scanned:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         for name in REMOVED:
             assert name not in text, f"{path.relative_to(ROOT)} still mentions {name}"
 

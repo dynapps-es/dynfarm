@@ -125,7 +125,7 @@ def test_a_bad_value_names_where_it_came_from(monkeypatch):
 
 def test_the_flag_is_enough_even_when_the_config_file_is_broken(config_dir):
     config_dir.mkdir()
-    (config_dir / "config.toml").write_text("this is [not toml")
+    (config_dir / "config.toml").write_text("this is [not toml", encoding="utf-8")
     assert resolve_host("farm.example.com") == "https://farm.example.com"
     with pytest.raises(ConfigError):
         resolve_host()
@@ -157,7 +157,7 @@ def test_what_is_saved_is_what_is_loaded_including_a_token_in_a_host_table():
         "hosts": {"https://a.example.com": {"token": "tok-plain"}, "https://b.example.com": {}},
     }
     path = config.save_config(data)
-    assert path.read_text().count("[hosts.") == 2
+    assert path.read_text(encoding="utf-8").count("[hosts.") == 2
     assert config.load_config() == data
 
 
@@ -195,7 +195,7 @@ def test_a_failed_write_leaves_the_old_file_whole_and_no_temp_file_behind(config
 
 def test_a_file_that_is_not_toml_is_an_error_naming_the_file_not_its_content(config_dir):
     config_dir.mkdir()
-    (config_dir / "config.toml").write_text('token = "tok-must-not-leak\nbroken [')
+    (config_dir / "config.toml").write_text('token = "tok-must-not-leak\nbroken [', encoding="utf-8")
     with pytest.raises(ConfigError) as caught:
         config.load_config()
     assert "config.toml" in caught.value.message
@@ -205,6 +205,6 @@ def test_a_file_that_is_not_toml_is_an_error_naming_the_file_not_its_content(con
 @pytest.mark.parametrize("text", ["default_host = 3", "hosts = 'x'", "[hosts]\n'https://a.example.com' = 1"])
 def test_a_file_of_the_wrong_shape_is_a_configuration_error(config_dir, text):
     config_dir.mkdir()
-    (config_dir / "config.toml").write_text(text)
+    (config_dir / "config.toml").write_text(text, encoding="utf-8")
     with pytest.raises(ConfigError, match="wrong shape"):
         config.load_config()

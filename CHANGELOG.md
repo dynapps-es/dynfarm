@@ -32,12 +32,19 @@ First release: a command-line client for the Dynapps Agent Farm API.
 - **Installation**: `dynfarm` is published on PyPI. `uv tool install dynfarm` (or `pipx install dynfarm`, or
   `pip install dynfarm`); `install.sh` (macOS, Linux) and `install.ps1` (Windows) install `uv` when it is missing and
   then `dynfarm` from PyPI, with an optional version to pin. No credential is needed.
+- **`python -m dynfarm`** is the same command as the `dynfarm` script, for when the folder `pip` puts scripts in is not on
+  `PATH` (a fresh Python on Windows: `py -m pip install dynfarm`, then `py -m dynfarm --version`).
+- **Linux, macOS and Windows**: the whole test suite runs on all three. Output with a character the terminal's encoding
+  cannot show (a Windows pipe) is escaped instead of ending in a traceback, and prompt and JSON files saved by a
+  Windows editor with a byte-order mark are read as they were meant.
 
 ### Quality gates
 
 - A continuous-integration pipeline that lints, runs the suite on Python 3.11 to 3.14 with a coverage floor, drives the
   installed binary against a fake farm over a real socket, installs the built wheel in a clean environment, and checks
   daily that the commands still cover the live API.
+- A GitHub workflow runs the whole suite on Linux, Windows and macOS (Python 3.11 and 3.14) on every change to `main`,
+  and installs the built wheel and source distribution in a fresh environment on each system.
 - A tag `v<version>` publishes the wheel and the source distribution to PyPI with Trusted Publishing (no stored
-  token), after the tag, the lint and the whole test suite have been checked, and creates a GitHub Release with this
-  section as its notes.
+  token), after the tag has been checked and the suite has passed on all three systems, then installs the published
+  release on each of them with the install scripts, and creates a GitHub Release with this section as its notes.

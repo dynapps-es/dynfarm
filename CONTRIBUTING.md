@@ -16,6 +16,10 @@ python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 
 Repeat the `pip install` after every pull: dependencies are pinned and change with the code.
 
+On Windows the same, with `py -m venv .venv` and `.venv\Scripts\pip install -e ".[dev]"`; the commands are
+`.venv\Scripts\python -m pytest` and so on. The package runs on Linux, macOS and Windows, and code and tests are written
+for all three (see "Portable code and tests").
+
 ## Conventions
 
 - **Everything in English**: code, comments, docstrings, commits, docs.
@@ -60,8 +64,10 @@ that is the CLI being told about the new contract.
 
 ## CI
 
-Every push runs `lint`, `test`, `e2e` and `package`; a daily schedule on `main` runs `api-drift`. Each job is a command
-you can run locally; the pipeline is red when any of them is.
+There are two CIs, because the project lives in two places. In the private GitLab project (**Linux runners only**) every
+push runs `lint`, `test`, `e2e` and `package`, and a daily schedule on `main` runs `api-drift`. On the public GitHub
+mirror, `.github/workflows/ci.yml` runs the suite on **Linux, Windows and macOS** (see "CI on the mirror" below). Each
+job is a command you can run locally; the pipeline is red when any of them is.
 
 | Job | Guards against | Locally |
 |---|---|---|
@@ -94,6 +100,45 @@ you can run locally; the pipeline is red when any of them is.
   (`tools/check_tag.py`), so a bad tag is red on GitLab too. Nothing is published from GitLab: publishing is the job of
   `.github/workflows/release.yml` on the mirror (see "Releasing").
 - **The live smoke test against a real farm is not in CI**: CI has no farm token and must not get one.
+
+### CI on the mirror
+
+GitLab has no Windows or macOS runners, GitHub offers both for free, so the mirror is where the code runs on them.
+`.github/workflows/ci.yml` starts on a push to `main` (what the push mirror delivers), by hand (Actions, "Run
+workflow") and when `release.yml` calls it (`workflow_call`). Nothing else starts it: not a pull request, since the
+mirror takes none, and not a tag, which is the release's. It reads the repository and has no secret.
+
+| Job | What it runs | Cells |
+|---|---|---|
+| `test` | `pip install -e '.[dev]'`, then the whole suite with the coverage floor (`pytest --cov=dynfarm`); `ruff` only in one cell | Linux, Windows, macOS x Python 3.11 and 3.14 |
+| `install` | `python -m build`, then the wheel and the sdist each in a fresh virtual environment: `dynfarm --version`, `--help`, `task --help`, `python -m dynfarm --version` | Linux, Windows, macOS (Python 3.14) |
+
+A red cell on one system does not cancel the others (`fail-fast: false`): the first run on a system tells the most. The
+workflow's first run on `main` is the first time the code runs on Windows and macOS; a failure there is a portability
+bug to fix in the private project and carry over, never a reason to edit the mirror. Reproduce a Windows failure from
+the job log; its cell names the operating system and Python.
+
+The Windows cells run `bash` (Git Bash, preinstalled), which is why `ci.yml` sets it as the default shell: one syntax for
+the three systems. A few tests are skipped on Windows, each with its reason in the `-ra` summary: file modes
+(`0600`/`0700`), pseudo-terminals, and the tests of `install.sh` (Windows has `install.ps1`).
+
+### Portable code and tests
+
+Rules that keep the three systems green; `tests/test_portability.py` enforces what can be enforced.
+
+- **Say the encoding of every text file** (`read_text(encoding="utf-8")`, `write_text(..., encoding="utf-8")`): the
+  default of a Windows machine is a legacy code page and `\n` becomes `\r\n`. Where the exact bytes matter (a secret in a
+  file, a line ending under test), use `write_bytes`. The portability test scans `src`, `tests` and `tools` for a call that
+  forgets.
+- **POSIX-only things are guarded**: `os.chmod` and `os.fchmod` run only when `os.name == "posix"` (a Windows Python has
+  no `fchmod`), no `fcntl`, `termios` or `pty` import at the top of a module in `src`, and a test that asserts a file
+  mode or needs a pseudo-terminal is skipped on Windows with a reason, never silently.
+- **Find the installed script with `tests/childproc.py`** (`installed_binary()`, `child_environment()`), not with a
+  path such as `.venv/bin/dynfarm`: Windows has `Scripts\dynfarm.exe`, and a plain Python there keeps its scripts next
+  to, not in, the interpreter's directory. A child's scrubbed environment keeps `SYSTEMROOT` and sets `TEMP`, or Windows
+  cannot start Python with sockets.
+- **Do not assert on a sleep to the millisecond**: a Windows clock ticks every 15 ms.
+- **`.gitattributes` makes every text file LF** on checkout. Do not add a file that needs CRLF.
 
 ## Testing a command with the fake farm
 
@@ -139,13 +184,20 @@ publishes, so nobody cuts one to "see what happens". `v*` tags are protected in 
    disagree: delete the tag, fix, tag again.
 4. The push mirror copies `main` and the tag to GitHub. The tag starts `.github/workflows/release.yml`, which runs, in
    order:
-   - `verify`: `tools/check_tag.py` first, then lint and the whole test suite with its coverage floor;
-   - `build`: the sdist and the wheel, `twine check`;
+   - `check-tag`: `tools/check_tag.py` alone, first, so a bad tag fails in seconds;
+   - `ci`: the whole of `ci.yml` (lint, the suite on Linux, Windows and macOS, the install of the built package on each).
+     **A red cell on any system stops the release**: nothing is published from a tree that fails where people install it;
+   - `build`: the sdist and the wheel, `twine check`. It needs `check-tag` and `ci`;
    - `publish`: uploads them to PyPI with **Trusted Publishing** (OIDC, no token stored anywhere) in the `pypi` GitHub
      environment, restricted to `v*` tags. It is the only job that may request an identity token;
-   - `github-release`: creates the GitHub Release with the changelog section as notes and the files attached.
-5. Try the install on a clean machine: `uv tool install dynfarm==x.y.z` (or `sh install.sh x.y.z`) and
-   `dynfarm --version`.
+   - `smoke-pypi`: on Linux, Windows and macOS, waits (at most 10 x 30 s, `tools/wait_for_pypi.py`) until PyPI lists the
+     version, runs `install.sh` or `install.ps1` with it and checks that `dynfarm --version` prints the tag's version. It
+     cannot unpublish: if it is red, the release is out but does not install on that system, and the fix is the next
+     patch version;
+   - `github-release`: creates the GitHub Release with the changelog section as notes and the files attached. It runs
+     as soon as `publish` succeeds, in parallel with `smoke-pypi`.
+5. Read the `smoke-pypi` cells; they are the install on a clean machine of each system. By hand, the same is
+   `uv tool install dynfarm==x.y.z` (or `sh install.sh x.y.z`) and `dynfarm --version`.
 
 **One-time setup** (done once, by an owner of the PyPI project and of the GitHub repository): on PyPI, add a *pending*
 trusted publisher for the project `dynfarm` (Account settings, Publishing) with owner `dynapps-es`, repository
@@ -158,12 +210,14 @@ version. A bad release is not deleted; it is superseded, and yanked on PyPI when
 it any more (a yanked version stays installable by exact version).
 
 `tools/check_tag.py vX.Y.Z` can be run locally before tagging: it says what would be refused. The install scripts, the
-workflow and `tests/test_packaging.py` change together: the test pins what the scripts may and may not do (install
-`dynfarm` from PyPI, a version they refuse to pass on to a shell, no credential anywhere) and what the workflow may
-(triggered only by `v*` tags, every action pinned to a commit SHA, `id-token: write` in `publish` alone, the order of
-the jobs). When you bump an action, look the commit up (`gh api repos/OWNER/ACTION/commits/TAG --jq .sha`) and keep the
-version in the comment next to it. The shell script is tested with a fake `uv` and `curl`; `install.ps1` has no
-runner in CI, so it is checked statically, and a change to it needs a run on a real Windows machine before the tag.
+workflows and `tests/test_packaging.py` change together: the test pins what the scripts may and may not do (install
+`dynfarm` from PyPI, a version they refuse to pass on to a shell, no credential anywhere) and what the workflows may
+(`release.yml` triggered only by `v*` tags and `ci.yml` only by `main`, a call and a manual run; every action pinned to a
+commit SHA, the same one in both; `id-token: write` in `publish` alone; `ci.yml` read-only; the order of the jobs, with
+`build` after the tag check and the CI gate and `smoke-pypi` after `publish`). When you bump an action, look the commit up (`gh api repos/OWNER/ACTION/commits/TAG --jq .sha`) and keep the
+version in the comment next to it. The shell script is tested with a fake `uv` and `curl`; `install.ps1` is checked statically and,
+after a release, run for real by `smoke-pypi` on a Windows runner, so a change to it is only proven by a tag: try it on a
+Windows machine first.
 
 ## Live smoke
 

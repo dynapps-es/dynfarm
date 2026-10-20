@@ -45,7 +45,7 @@ def store(warnings) -> TokenStore:
 
 
 def read_config() -> dict:
-    return tomllib.loads(config_path().read_text())
+    return tomllib.loads(config_path().read_text(encoding="utf-8"))
 
 
 class BrokenKeyring(KeyringBackend):
@@ -143,7 +143,7 @@ def test_remember_puts_the_token_in_the_keyring_and_only_the_farm_in_the_file(st
     saved = store.remember(HOST, SENTINEL)
     assert saved.where == "keyring"
     assert memory_keyring.entries[(SERVICE, HOST)] == SENTINEL
-    assert SENTINEL not in config_path().read_text()
+    assert SENTINEL not in config_path().read_text(encoding="utf-8")
     assert read_config() == {"default_host": HOST, "hosts": {HOST: {}}}
     assert warnings == []
 

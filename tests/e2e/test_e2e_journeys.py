@@ -66,7 +66,7 @@ def test_the_token_of_the_environment_works_without_a_login_and_is_never_written
     assert run.code == 0, run.output
     assert run.json()["subject"] == "alice"
     assert not dynfarm.config_dir.exists() or ALICE not in "".join(
-        p.read_text() for p in dynfarm.config_dir.rglob("*") if p.is_file()
+        p.read_text(encoding="utf-8") for p in dynfarm.config_dir.rglob("*") if p.is_file()
     )
 
 
@@ -230,7 +230,7 @@ def test_a_credential_set_from_a_file_or_the_environment_keeps_the_secret_off_th
     secret = f"sk-e2e-{how}-3c91e5a7d2b8"
     if how == "file":
         path = tmp_path / "secret.txt"
-        path.write_text(secret + "\n")
+        path.write_bytes(secret.encode() + b"\n")
         run = logged_in.run("credential", "set", "web-api", "--type", "generic", "--value-file", str(path))
     else:
         run = logged_in.run(

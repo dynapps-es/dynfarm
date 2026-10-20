@@ -58,7 +58,7 @@ def login(invoke, token=SENTINEL, host=HOST, *extra, **options):
 
 
 def read_config() -> dict:
-    return tomllib.loads(config_path().read_text())
+    return tomllib.loads(config_path().read_text(encoding="utf-8"))
 
 
 def assert_never_shown(result, token=SENTINEL):

@@ -1,0 +1,4 @@
+# Text files are checked out with LF on every system, Windows included. Without this, a Windows checkout turns them into
+# CRLF: `install.sh` stops being a valid shell script, and the pinned OpenAPI document no longer matches, byte for byte,
+# what `tools/fetch_openapi.py` writes (tests/test_fetch_openapi.py compares them).
+* text=auto eol=lf

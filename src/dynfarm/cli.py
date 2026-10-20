@@ -8,6 +8,7 @@ entry of `COMMANDS` is `name -> "module:attribute"`, imported only when that com
 from __future__ import annotations
 
 import importlib
+import sys
 
 import click
 
@@ -62,5 +63,19 @@ def cli(ctx: click.Context, debug: bool) -> None:
     ctx.ensure_object(AppContext).debug = debug
 
 
+def _survive_a_narrow_terminal() -> None:
+    """Make what the farm sends printable on any standard output.
+
+    A piped standard output on Windows (and a POSIX one under `LANG=C`) is encoded with the machine's legacy code page,
+    which cannot hold every character a task log or a name may contain: Python would stop with a traceback after the
+    command had worked. A character the encoding lacks is written as an escape instead (`\\u65e5`), as standard error
+    already does. A UTF-8 output is untouched.
+    """
+    reconfigure = getattr(sys.stdout, "reconfigure", None)  # absent on a replaced stream (tests, embedding)
+    if reconfigure is not None:
+        reconfigure(errors="backslashreplace")
+
+
 def main() -> None:
+    _survive_a_narrow_terminal()
     cli(prog_name=NAME)

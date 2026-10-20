@@ -23,6 +23,7 @@ from __future__ import annotations
 import contextlib
 import os
 import tempfile
+import time
 import tomllib
 from collections.abc import Mapping
 from pathlib import Path
@@ -123,6 +124,24 @@ def load_config(environ: Mapping[str, str] | None = None) -> dict[str, Any]:
     return data
 
 
+def _replace(source: str, target: Path) -> None:
+    """`os.replace`, tried a few times on Windows.
+
+    There, replacing a file that another program has open for a moment (a virus scanner or the search indexer reading
+    the file just written) fails with `PermissionError` and works a few milliseconds later. POSIX has no such window,
+    so it tries once and a real permission problem is reported at once.
+    """
+    attempts = 5 if os.name == "nt" else 1
+    for attempt in range(1, attempts + 1):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if attempt == attempts:
+                raise
+            time.sleep(0.05 * attempt)
+
+
 def save_config(data: Mapping[str, Any], environ: Mapping[str, str] | None = None) -> Path:
     """Write the config file atomically, `0600`, in a `0700` directory (POSIX). Returns its path.
 
@@ -144,7 +163,7 @@ def save_config(data: Mapping[str, Any], environ: Mapping[str, str] | None = Non
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp_name, path)
+        _replace(tmp_name, path)
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(tmp_name)

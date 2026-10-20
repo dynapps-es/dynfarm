@@ -81,7 +81,7 @@ def assert_not_shown(result, secret=SECRET):
 def test_the_types_set_accepts_are_exactly_the_enum_of_the_pinned_openapi():
     from fakefarm.farm import FIXTURE
 
-    schema = json.loads(FIXTURE.read_text())["components"]["schemas"]["CredentialCreate"]
+    schema = json.loads(FIXTURE.read_text(encoding="utf-8"))["components"]["schemas"]["CredentialCreate"]
     assert list(CREDENTIAL_TYPES) == schema["properties"]["type"]["enum"]
 
 
@@ -235,7 +235,7 @@ def test_set_refuses_an_empty_value_with_exit_2_and_sends_nothing(run_cli, fake_
 
 def test_set_refuses_an_empty_file(run_cli, fake_farm, tmp_path):
     empty = tmp_path / "empty.txt"
-    empty.write_text("\n")
+    empty.write_bytes(b"\n")
     result = run_cli(set_args("--value-file", str(empty)))
     assert result.exit_code == 2 and f"--value-file {empty} is empty" in result.stderr
     assert fake_farm.requests == []

@@ -21,8 +21,10 @@ from dynfarm.errors import ConfigError
 def read_text(source: str, flag: str) -> str:
     """The text of the file `source` (standard input for `-`) without its final line break; `ConfigError` if not."""
     try:
-        # `sys.stdin`, not `click.get_text_stream`, which click 8.5 deprecates.
-        text = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
+        # `sys.stdin`, not `click.get_text_stream`, which click 8.5 deprecates. `utf-8-sig`: Windows editors and
+        # PowerShell write UTF-8 files with a byte-order mark, which would otherwise be the first character of the
+        # prompt or make a JSON file "invalid".
+        text = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8-sig")
     except (OSError, UnicodeDecodeError) as exc:
         raise ConfigError(
             f"cannot read {flag} {source}: {getattr(exc, 'strerror', None) or 'not UTF-8 text'}"

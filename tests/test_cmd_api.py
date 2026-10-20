@@ -105,7 +105,7 @@ def test_typed_fields_become_booleans_null_and_integers_while_raw_fields_stay_st
 
 def test_a_typed_field_can_read_its_text_from_a_file_or_from_standard_input(run_cli, fake_farm, tmp_path):
     prompt = tmp_path / "prompt.txt"
-    prompt.write_text("review this\nplease\n")
+    prompt.write_text("review this\nplease\n", encoding="utf-8")
     printed(run_cli(["api", "tasks", "-F", f"prompt=@{prompt}"]))
     assert body_of(fake_farm.requests[-1]) == {"prompt": "review this\nplease\n"}
     printed(run_cli(["api", "tasks", "-F", "prompt=@-"], input="from stdin"))
@@ -121,7 +121,7 @@ def test_input_from_standard_input_is_the_json_body(run_cli, fake_farm):
 
 def test_input_from_a_file_with_fields_sends_the_fields_in_the_query(run_cli, fake_farm, tmp_path):
     body = tmp_path / "task.json"
-    body.write_text(json.dumps({"agent_id": "example-plugin:code-reviewer"}))
+    body.write_text(json.dumps({"agent_id": "example-plugin:code-reviewer"}), encoding="utf-8")
     printed(run_cli(["api", "tasks", "--input", str(body), "-f", "note=x"]))
     sent = fake_farm.requests[-1]
     assert sent.method == "POST" and sent.query == {"note": ["x"]}
