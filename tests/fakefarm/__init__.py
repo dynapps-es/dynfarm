@@ -1,0 +1,31 @@
+"""The fake Agent Farm for the CLI tests. See `farm.py` for what it models and why."""
+
+from .farm import (
+    ADMIN,
+    ALICE,
+    BOB,
+    EXPIRED,
+    HOST,
+    OTHER,
+    OTHER_TENANT,
+    READONLY,
+    TENANT,
+    FakeFarm,
+    FakeFarmBug,
+    Principal,
+)
+
+__all__ = [
+    "ADMIN",
+    "ALICE",
+    "BOB",
+    "EXPIRED",
+    "HOST",
+    "OTHER",
+    "OTHER_TENANT",
+    "READONLY",
+    "TENANT",
+    "FakeFarm",
+    "FakeFarmBug",
+    "Principal",
+]

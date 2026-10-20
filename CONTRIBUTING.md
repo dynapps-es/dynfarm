@@ -41,3 +41,20 @@ curl -sf https://farm-dev.ai.dyncloud.es/openapi.json \
   | python3 -c "import json,sys;json.dump(json.load(sys.stdin),sys.stdout,indent=2,sort_keys=True);print()" \
   > tests/fixtures/openapi.json
 ```
+
+## Testing a command with the fake farm
+
+`tests/fakefarm/` is an in-memory model of the whole API. It checks every request against the pinned OpenAPI and every
+answer too, so a command that sends a field the API does not know fails its test even if the test never looks.
+
+- Fixtures (`tests/conftest.py`): `fake_farm` (the model), `run_cli(args, input=None, token=...)` (the real `dynfarm`
+  in-process, against the fake, as `tok-alice` by default) and `sleeps` (the retry pauses, recorded instead of slept).
+  The environment is scrubbed of `DYNFARM_*` / `AGENT_FARM_*` and the config dir is a temp dir in every test.
+- Tokens: `ALICE`, `BOB` (same tenant), `OTHER` (another tenant), `ADMIN` (`farm:tenant:admin`), `READONLY`, `EXPIRED`.
+  Another person's or tenant's object is a 404, as in the real farm.
+- Arrange through the model (`fake_farm.seed_task(ALICE, state="running")`, `set_task`, `fail_next("get_task", ...)`)
+  or through the API, then `result = run_cli(["task", "view", id])` and assert on `result.exit_code`, `result.stdout`,
+  `result.stderr` and on `fake_farm.requests` (method, path, headers, body of everything that crossed the wire).
+- A test that sends something invalid on purpose asserts `fake_farm.take_violations()`; any other leftover violation
+  fails the test at teardown. For a real socket (the installed binary) use `with fake_farm.serve() as url:`.
+- Declare the API operations a command calls with `@operation("list_tasks")` (`dynfarm.registry`); the parity test reads it.

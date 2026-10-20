@@ -12,7 +12,8 @@ import importlib
 import click
 
 from dynfarm import __version__
-from dynfarm._brand import NAME
+from dynfarm._brand import NAME, env
+from dynfarm.context import AppContext
 
 #: name -> "module:attribute" of a click command or group. Order here is the order in `--help`.
 COMMANDS: dict[str, str] = {}
@@ -37,8 +38,17 @@ class LazyGroup(click.Group):
 
 @click.group(cls=LazyGroup, lazy_commands=COMMANDS, context_settings={"help_option_names": ["-h", "--help"]})
 @click.version_option(__version__, "--version", prog_name=NAME, message="%(prog)s %(version)s")
-def cli() -> None:
+@click.option(
+    "--debug",
+    is_flag=True,
+    envvar=env("DEBUG"),
+    help="Print method, path, status and timing of each request to stderr (never headers or bodies).",
+)
+@click.pass_context
+def cli(ctx: click.Context, debug: bool) -> None:
     """Work with the Agent Farm from the command line."""
+    # `obj` may already be an AppContext: tests pass one carrying the fake farm's transport.
+    ctx.ensure_object(AppContext).debug = debug
 
 
 def main() -> None:
