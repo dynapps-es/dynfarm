@@ -55,7 +55,8 @@ answer too, so a command that sends a field the API does not know fails its test
   backend (absent, broken, forgetful). `CI` is unset in every test; set it only to test what it changes.
 - Tokens: `ALICE`, `BOB` (same tenant), `OTHER` (another tenant), `ADMIN` (`farm:tenant:admin`), `READONLY`, `EXPIRED`.
   Another person's or tenant's object is a 404, as in the real farm.
-- Arrange through the model (`fake_farm.seed_task(ALICE, state="running")`, `set_task`, `fail_next("get_task", ...)`)
+- Arrange through the model (`fake_farm.seed_task(ALICE, state="running")`, `set_task`, `set_schedule`,
+  `fail_next("get_task", ...)`)
   or through the API, then `result = run_cli(["task", "view", id])` and assert on `result.exit_code`, `result.stdout`,
   `result.stderr` and on `fake_farm.requests` (method, path, headers, body of everything that crossed the wire).
 - When a test needs an answer the model never gives (a field the farm may add, a task that moves through states while

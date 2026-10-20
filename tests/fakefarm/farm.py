@@ -261,6 +261,12 @@ class FakeFarm:
             row.data["started_at"] = row.data["started_at"] or self._ts()
         row.data["updated_at"] = self._ts()
 
+    def set_schedule(self, schedule_id: str, **fields: Any) -> None:
+        """Change a schedule as the farm would (state `finished`, `last_fire_state`, `missed_runs`...)."""
+        row = self._schedules[schedule_id]
+        row.update(fields)
+        row["updated_at"] = self._ts()
+
     def expire_result(self, task_id: str) -> None:
         self._tasks[task_id].result_expired = True
         self.set_task(task_id, state="expired")
@@ -506,7 +512,7 @@ class FakeFarm:
     def _task_for(self, call: Call) -> TaskRow:
         row = self._tasks.get(call.path["task_id"])
         if row is None or not self._owns(call.principal, row.data["tenant"], row.data["owner"]):
-            raise ApiProblem(404, "task_not_found", "no such task")
+            raise ApiProblem(404, "not_found", "no such task")
         return row
 
     def _task_out(self, principal: Principal, row: TaskRow) -> dict[str, Any]:
@@ -920,7 +926,7 @@ class FakeFarm:
     def _schedule_for(self, call: Call) -> dict[str, Any]:
         row = self._schedules.get(call.path["schedule_id"])
         if row is None or not self._owns(call.principal, row["tenant"], row["owner"]):
-            raise ApiProblem(404, "schedule_not_found", "no such schedule")
+            raise ApiProblem(404, "not_found", "schedule not found")
         return row
 
     @staticmethod

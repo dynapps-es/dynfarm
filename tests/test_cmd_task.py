@@ -466,7 +466,7 @@ def test_every_command_answers_404_for_another_persons_or_tenants_task(run_cli, 
     theirs = fake_farm.seed_task(OTHER, state="succeeded")
     for task_id in (bobs, theirs, "no-such-task"):
         result = run_cli(["task", command, task_id, "--yes"] if command == "cancel" else ["task", command, task_id])
-        assert result.exit_code == 1 and "task_not_found" in result.stderr, (command, task_id)
+        assert result.exit_code == 1 and "not_found" in result.stderr, (command, task_id)
     assert sent(fake_farm, "cancel_task") == [] or all(r.status == 404 for r in sent(fake_farm, "cancel_task"))
     assert fake_farm._tasks[bobs].data["state"] == "succeeded"
 

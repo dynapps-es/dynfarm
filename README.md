@@ -126,6 +126,47 @@ dynfarm agent delete web-manager                    # asks first; --yes in scrip
   (`insufficient_scope`), another person's personal agent is a 404, and a delete is refused while a schedule that has
   not finished still launches the agent (`agent_in_use_by_schedule`). The error code is printed with the message.
 
+## Schedules
+
+A schedule is a task the farm launches again and again: "review my open MRs every weekday at 08:00". It is a task, a
+recurrence (a cron in a timezone) and what to do when a firing is due while the previous task still runs.
+
+```bash
+dynfarm schedule create developer-skills:code-reviewer --input "Review my open MRs." \
+    --cron "0 8 * * 1-5" --timezone Europe/Madrid
+dynfarm schedule create --prompt-file digest.txt --scope docs --cron "0 7 * * 1" --timezone UTC --max-runs 10
+dynfarm schedule create --body-file task.json --recurrence-file recurrence.json --overlap allow
+dynfarm schedule list                       # id, state, cron, next fire, task, owner; --owner me, --json
+dynfarm schedule view SCHEDULE_ID           # when it fires next, how the last firing went, the task it launches
+dynfarm schedule runs SCHEDULE_ID           # the tasks it fired, newest first; --limit N for the newest N
+dynfarm schedule fire SCHEDULE_ID           # launch its task now, once
+dynfarm schedule pause SCHEDULE_ID          # and `resume`
+dynfarm schedule delete SCHEDULE_ID         # asks first; --yes in scripts
+```
+
+- **The task is written exactly as for `task run`**: an `AGENT` with `--input`, or a `--prompt`, plus `--scope`,
+  `--session-ref`, `--prompt-file`, `--input-file` and `--body-file` (a complete task as JSON, for `workspace`,
+  `limits`, `mcp_servers`...). There is no `--correlation-id`: every firing generates its own. The farm keeps the
+  prompt and the input, as for a task, and `create` says so.
+- **The recurrence is `--cron` with `--timezone`**, or `--recurrence-file FILE` (`-` for standard input) with
+  `cron`, `timezone`, `starts_at`, `ends_at` and `max_runs`; a flag overrides the same field of the file. The cron has
+  five fields and no seconds, so the finest schedule is once a minute. **There is no default timezone**: `create`
+  refuses to send a recurrence without one rather than guess yours, because 08:00 means different instants in different
+  zones (08:00 `Europe/Madrid` stays 08:00 across daylight-saving changes). `--starts-at` and `--ends-at` are ISO 8601
+  times; reaching `--ends-at` or `--max-runs` moves the schedule to `finished`, which is final.
+- **`--overlap skip|allow`** (default `skip`): a firing due while the previous task is still running is dropped and
+  recorded in `last fire`, or started in parallel.
+- **`fire` runs the task now** and prints it (`trigger: manual`); it does not move the next cron firing or count
+  against `--max-runs`. Unlike a cron firing, a refusal is an error with a code: `schedule_not_active` (paused or
+  finished) or `schedule_overlap`. Follow the task it printed with `dynfarm task watch ID`.
+- **`pause` and `resume`** do not replay what was missed meanwhile (`missed runs` in `view` counts it). A finished
+  schedule answers `schedule_finished` to both. `create`, `fire`, `pause`, `resume` and `delete` are never repeated by
+  themselves after a network error.
+- **A schedule belongs to its owner**, and so does every task it fires, whoever pauses or fires it later (a tenant
+  admin can operate their colleagues'). Someone else's schedule is a 404. `delete` stops the schedule; the tasks it
+  already fired stay under `task list`.
+- Cron and timezone are the farm's to judge: `cron_invalid` and `timezone_invalid` are printed with its message.
+
 ## Raw API calls
 
 `dynfarm api` calls any endpoint of the farm's API and prints the JSON answer, like `gh api`. The path is relative to

@@ -155,7 +155,7 @@ def test_the_error_envelope_becomes_a_farm_error_with_its_code_details_and_flags
         with pytest.raises(FarmError) as caught:
             client.request("GET", "/tasks/not-a-task")
     error = caught.value
-    assert (error.status, error.code, error.retryable) == (404, "task_not_found", False)
+    assert (error.status, error.code, error.retryable) == (404, "not_found", False)
     assert error.exit_code == 1
 
 

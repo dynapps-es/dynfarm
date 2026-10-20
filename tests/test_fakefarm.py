@@ -173,7 +173,7 @@ def test_an_id_that_is_not_a_uuid_or_tries_to_escape_the_route_simply_does_not_e
         API + "/tasks/..%2Fcredentials", headers={"Authorization": f"Bearer {ALICE}"}
     )
     assert escaped.status_code == 404
-    assert error_code(escaped) == "task_not_found"
+    assert error_code(escaped) == "not_found"
 
 
 # -- tasks ------------------------------------------------------------------------------------------------------

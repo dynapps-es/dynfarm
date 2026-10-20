@@ -23,6 +23,7 @@ COMMANDS: dict[str, str] = {
     "callback-key": "dynfarm.commands.identity:callback_key",
     "task": "dynfarm.commands.task:task",
     "agent": "dynfarm.commands.agent:agent",
+    "schedule": "dynfarm.commands.schedule:schedule",
     "api": "dynfarm.commands.api:api",
 }
 

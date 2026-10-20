@@ -188,7 +188,7 @@ def test_paginate_is_refused_for_a_method_that_is_not_get(run_cli, fake_farm):
 def test_an_error_of_the_farm_keeps_its_code_and_exits_1(run_cli, fake_farm):
     result = run_cli(["api", "tasks/task-nope"])
     assert result.exit_code == 1 and result.stdout == ""
-    assert "(task_not_found)" in result.stderr
+    assert "(not_found)" in result.stderr
 
 
 def test_an_authentication_failure_exits_4_and_tells_expired_from_invalid(run_cli):
