@@ -24,7 +24,7 @@ ANSWER = {
             "state": "running",
             "agent_id": "repo-helper",
             "created_at": "2026-10-20T09:00:00Z",
-            "usage": {"cost_eur": 0.5},
+            "usage": {"ratio": 0.5},
             "tags": ["a", "b"],
             "ok": True,
         },
@@ -148,7 +148,7 @@ def test_a_pipe_has_no_output_at_all_for_an_empty_listing():
 
 def test_values_are_formatted_by_type_and_dotted_keys_and_functions_find_nested_values():
     columns = (
-        Column("cost", "usage.cost_eur"),
+        Column("ratio", "usage.ratio"),
         Column("tags", "tags"),
         Column("ok", "ok"),
         Column("n", lambda row: len(row["task_id"])),

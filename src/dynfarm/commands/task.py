@@ -133,7 +133,6 @@ def _fields(task_data: dict[str, Any]) -> list[tuple[str, Any]]:
         ("started", task_data.get("started_at")),
         ("finished", task_data.get("finished_at")),
         ("duration", f"{usage['duration_s']} s" if usage.get("duration_s") is not None else None),
-        ("cost", f"{usage['cost_eur']} EUR" if usage.get("cost_eur") is not None else None),
         ("correlation id", task_data.get("correlation_id")),
         ("session", task_data.get("session_ref")),
         ("repository", workspace.get("repo")),
@@ -284,7 +283,7 @@ def list_(
 @operation("get_task", "list_tasks")
 @needs_client
 def view(client: FarmClient, task_id: str, json_flag: bool) -> None:
-    """Show a task: its state, who ran it, what it was asked and what it cost."""
+    """Show a task: its state, who ran it and what it was asked."""
     task_id = resolve_task_id(client, task_id)
     _print_task(client.request("GET", _path(task_id), operation_id="get_task"), json_flag=json_flag)
 
@@ -363,7 +362,6 @@ def _print_result(answer: dict[str, Any]) -> None:
     rows = [
         ("state", answer.get("state")),
         ("duration", f"{usage['duration_s']} s" if usage.get("duration_s") is not None else None),
-        ("cost", f"{usage['cost_eur']} EUR" if usage.get("cost_eur") is not None else None),
         ("tokens", _tokens(usage)),
         ("session", answer.get("session_ref")),
         ("resumable", {True: "yes", False: "no"}.get(answer.get("resumable"))),

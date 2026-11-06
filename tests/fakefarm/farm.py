@@ -484,7 +484,7 @@ class FakeFarm:
             "result": "The change looks fine.",
             "session_ref": row.data["session_ref"] or "sess_fake",
             "resumable": True,
-            "usage": {"input_tokens": 100, "output_tokens": 20, "cost_usd": 0.01, "duration_s": 5, "num_turns": 2},
+            "usage": {"input_tokens": 100, "output_tokens": 20, "duration_s": 5, "num_turns": 2},
             "started_at": row.data["started_at"],
             "finished_at": row.data["finished_at"],
         }
@@ -772,7 +772,7 @@ class FakeFarm:
             "url": f"{self.base_url}/_s3/{d['task_id']}/result.json?X-Signature=fake",
             "expires_at": self._ts(300),
         }
-        usage = {"input_tokens": 100, "output_tokens": 20, "cost_eur": 0.01, "duration_s": 5}
+        usage = {"input_tokens": 100, "output_tokens": 20, "duration_s": 5}
         return 200, {
             "task_id": d["task_id"],
             "tenant": d["tenant"],

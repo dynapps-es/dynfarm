@@ -31,7 +31,7 @@ import click
 
 @dataclass(frozen=True)
 class Column:
-    """One table column: its header, where its value is (a dotted key such as `usage.cost_eur`, or a function), and
+    """One table column: its header, where its value is (a dotted key such as `usage.duration_s`, or a function), and
     whether it is a `"text"` or a `"date"` (shown relative on a terminal, as sent otherwise)."""
 
     header: str
