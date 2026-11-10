@@ -643,7 +643,7 @@ def test_result_shows_the_summary_the_usage_and_the_link(run_cli, fake_farm):
     task_id = fake_farm.seed_task(ALICE, state="succeeded")
     out = run_cli(["task", "result", task_id]).stdout
     assert out.startswith("summary:\n  The change looks fine.\n")
-    assert "cost:" in out and "0.01 EUR" in out and "duration:" in out and "5 s" in out
+    assert "cost" not in out and "duration:" in out and "5 s" in out
     assert f"{fake_farm.base_url}/_s3/{task_id}/result.json" in out
     assert "link valid until:" in out and "size:" in out and " bytes" in out
 
