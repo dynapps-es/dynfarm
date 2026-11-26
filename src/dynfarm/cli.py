@@ -26,6 +26,7 @@ COMMANDS: dict[str, str] = {
     "agent": "dynfarm.commands.agent:agent",
     "schedule": "dynfarm.commands.schedule:schedule",
     "credential": "dynfarm.commands.credential:credential",
+    "person": "dynfarm.commands.person:person",
     "api": "dynfarm.commands.api:api",
     "completion": "dynfarm.commands.completion:completion",
 }

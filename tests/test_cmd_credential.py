@@ -413,11 +413,11 @@ def test_list_shows_name_type_scope_and_fingerprint_of_your_own_and_never_a_valu
     put(fake_farm, BOB, name="bobs-own", value="bob-value")
     result = run_cli(["credential", "list"])
     listed = rows(result)
-    assert [row[:3] for row in listed] == [
-        ["git-readonly", "git_token", "personal"],
-        ["s3-backups", "git_token", "personal"],
+    assert [row[:4] for row in listed] == [
+        ["git-readonly", "git_token", "personal", "alice"],
+        ["s3-backups", "git_token", "personal", "alice"],
     ]
-    assert listed[0][3].startswith("sha256:") and listed[0][4] == "2027-01-01T00:00:00Z"
+    assert listed[0][4].startswith("sha256:") and listed[0][5] == "2027-01-01T00:00:00Z"
     assert_not_shown(result)
     assert sent(fake_farm, "list_credentials")[0].query == {}
 
@@ -516,3 +516,35 @@ def test_delete_of_someone_else_s_credential_is_not_found_and_keeps_it(run_cli, 
     result = run_cli(["credential", "delete", "git-readonly", "--yes"])
     assert result.exit_code == 1 and "(credentials_not_found)" in result.stderr
     assert stored(fake_farm, "git-readonly", subject="bob") == "bob-value"
+
+
+# -- owner (tenant admins) ----------------------------------------------------------------------------------------
+
+
+def test_list_as_an_admin_shows_everybody_s_owner_and_owner_narrows_it(run_cli, fake_farm):
+    put(fake_farm, ALICE, name="alices", value="a")
+    put(fake_farm, BOB, name="bobs", value="b")
+    everything = rows(run_cli(["credential", "list"], token=ADMIN))
+    assert [(row[0], row[3]) for row in everything] == [("alices", "alice"), ("bobs", "bob")]
+    narrowed = rows(run_cli(["credential", "list", "--owner", "bob"], token=ADMIN))
+    assert [(row[0], row[3]) for row in narrowed] == [("bobs", "bob")]
+    assert sent(fake_farm, "list_credentials")[-1].query == {"owner": ["bob"]}
+
+
+def test_delete_owner_removes_another_person_s_credential_row_and_value(run_cli, fake_farm):
+    put(fake_farm, BOB, name="bobs", value="b")
+    result = run_cli(["credential", "delete", "bobs", "--owner", "bob", "--yes"], token=ADMIN)
+    assert result.exit_code == 0, result.output
+    assert "deleted credential bobs of bob" in result.stdout
+    assert stored(fake_farm, "bobs", subject="bob") is None
+    assert sent(fake_farm, "delete_credential")[0].query == {"owner": ["bob"]}
+    assert rows(run_cli(["credential", "list", "--owner", "bob"], token=ADMIN)) == []
+
+
+def test_view_owner_shows_the_owner_and_without_admin_another_person_s_is_not_found(run_cli, fake_farm):
+    put(fake_farm, BOB, name="bobs", value="b")
+    seen = run_cli(["credential", "view", "bobs", "--owner", "bob"], token=ADMIN)
+    assert seen.exit_code == 0 and "owner:" in seen.stdout and "bob" in seen.stdout
+    refused = run_cli(["credential", "view", "bobs", "--owner", "bob"])
+    assert refused.exit_code == 1 and "credentials_not_found" in refused.stderr
+    assert stored(fake_farm, "bobs", subject="bob") == "b"

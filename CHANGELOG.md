@@ -24,6 +24,10 @@ First release: a command-line client for the Dynapps Agent Farm API.
 - **Credentials**: `dynfarm credential list|view|set|delete`. The secret is read only from a hidden prompt, standard
   input, `--value-file` or `--value-env`; no option takes it on the command line, and it is sent in the body of one
   request and nowhere else.
+- **People**: `dynfarm person list|view|offboard|readmit` for tenant admins. `offboard` is a dry run unless `--apply`,
+  which asks for the person's subject (`--yes` in scripts); `--transfer-to` names who receives the team's agents and
+  shared credentials. `list --tenant` reads other tenants with a `farm:platform:read` key. `credential list` shows
+  each credential's `owner`, and `list`, `view` and `delete` take `--owner` (tenant admins).
 - **The rest of the API**: `dynfarm whoami`, `plugin list`, `callback-key`, and `dynfarm api` for any other call, in
   the manner of `gh api`.
 - **Output for people and for scripts**: tables on a terminal, tab-separated rows in a pipe, `--json` everywhere;

@@ -46,8 +46,17 @@ def new_schedule(farm: FakeFarm, token: str = ALICE) -> str:
 
 
 def test_every_operation_of_the_pinned_openapi_is_served_and_nothing_else(fake_farm):
-    assert set(fake_farm._handlers) == fake_farm.openapi.operation_ids
-    assert len(fake_farm.openapi.operation_ids) == 27
+    #: Operations of the pinned document the CLI has no command for yet (the fake does not serve them either).
+    unserved = {
+        "create_link_code",
+        "get_transcript",
+        "issue_credential_upload",
+        "mark_task_viewed",
+        "update_schedule",
+        "upload_credential_value",
+    }
+    assert set(fake_farm._handlers) == fake_farm.openapi.operation_ids - unserved
+    assert len(fake_farm.openapi.operation_ids) == 37
 
 
 def test_an_unknown_operation_is_refused_and_recorded_as_a_violation(fake_farm):
@@ -260,7 +269,7 @@ def test_the_catalogue_lists_platform_agents_and_plugins(fake_farm):
     assert "example-plugin:code-reviewer" in slugs
     assert call(fake_farm, "GET", "/agents/repo-helper").json()["scope"] == "platform"
     assert call(fake_farm, "GET", "/plugins").json()["items"][0]["name"] == "example-plugin"
-    assert call(fake_farm, "GET", "/callback-key").json()["keys"][0]["alg"] == "EdDSA"
+    assert call(fake_farm, "GET", "/notify-key").json()["keys"][0]["alg"] == "EdDSA"
 
 
 def test_a_personal_agent_is_private_a_team_agent_needs_the_admin_scope_and_a_slug_is_unique(fake_farm):

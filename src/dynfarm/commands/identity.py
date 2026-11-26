@@ -102,11 +102,11 @@ def list_plugins(client: FarmClient, json_flag: bool) -> None:
 
 @click.command("callback-key")
 @click.option("--pem", is_flag=True, help="Print only the public key(s) as PEM, instead of the JSON.")
-@operation("callback_key")
+@operation("notify_key")
 @needs_client
 def callback_key(client: FarmClient, pem: bool) -> None:
     """Print the public key that verifies task callbacks (JWK as JSON, or --pem)."""
-    answer = client.request("GET", "/callback-key", operation_id="callback_key")
+    answer = client.request("GET", "/notify-key", operation_id="notify_key")
     if not pem:
         emit(answer, json_flag=True)
         return

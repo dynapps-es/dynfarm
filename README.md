@@ -142,7 +142,7 @@ review:
 ```bash
 dynfarm whoami                 # subject, tenant, scopes and expiry of your token (--json for the farm's answer)
 dynfarm plugin list            # the plugins bundled in the agent image and the agents each brings (--json)
-dynfarm callback-key           # the public key that verifies task callbacks, as JSON
+dynfarm callback-key           # the public key that signs the farm's notifications, as JSON
 dynfarm callback-key --pem     # only the PEM, ready for a file: dynfarm callback-key --pem > farm-callback.pem
 ```
 
@@ -280,9 +280,10 @@ dynfarm credential set git-readonly --type git_token                          # 
 dynfarm credential set git-readonly --type git_token --value-env GITLAB_TOKEN # from a variable you already have
 dynfarm credential set web-api --type generic --value-file ./web-api.key      # from a file
 pass show gitlab/readonly | dynfarm credential set git-readonly --type git_token   # from standard input
-dynfarm credential list                    # name, type, scope, fingerprint, expiry; --scope shared, --json
+dynfarm credential list                    # name, type, scope, owner, fingerprint, expiry; --scope shared, --json
 dynfarm credential view git-readonly       # its metadata: type, fingerprint, description, metadata, dates
 dynfarm credential delete git-readonly     # asks first; --yes in scripts
+dynfarm credential delete git-readonly --owner ana@example.com   # tenant admins: another person's credential
 ```
 
 - **The secret is never an argument.** There is no `--value` option: a command line stays in your shell history, is
@@ -312,9 +313,36 @@ dynfarm credential delete git-readonly     # asks first; --yes in scripts
 - **Personal and shared**: a credential is yours by default (`--scope personal`); another person's is a 404, as
   everything in the farm. `--scope shared` stores one for the whole team, which only a tenant admin may write, rotate
   or delete (`insufficient_scope` otherwise); everybody in the tenant can list it, nobody can read it, and the team's
-  agents refer to it as `shared:<name>`.
+  agents refer to it as `shared:<name>`. A tenant admin sees every personal credential of the tenant with its
+  `owner`, and `--owner SUBJECT` on `list`, `view` and `delete` reaches one person's.
 - Store the narrowest secret that does the job (a read-only, short-lived token): the farm hands it to the agents
   that name it, and an agent can be talked into showing what it holds.
+
+## People (tenant admins)
+
+The farm knows each person and each integration's key of a tenant by a `person_id` (a UUID). A tenant admin finds
+them and offboards one in a single step.
+
+```bash
+dynfarm person list                        # person_id, subject, kind, tenant, offboarded; --kind person|service, --offboarded|--active
+dynfarm person view PERSON_ID
+dynfarm person offboard PERSON_ID          # a dry run: lists what would be removed and handed over, changes nothing
+dynfarm person offboard PERSON_ID --apply  # asks you to type the subject; --yes in scripts
+dynfarm person offboard PERSON_ID --apply --transfer-to OTHER_PERSON_ID
+dynfarm person readmit PERSON_ID           # lifts the block; asks first, --yes in scripts
+dynfarm person list --tenant '*'           # a key with farm:platform:read can read other tenants, never change them
+```
+
+- **What an offboarding does**: blocks the person (`403 person_offboarded` for their keys, nothing created from chat,
+  their schedules do not fire), cancels their unfinished tasks, deletes their schedules, personal agents, personal
+  credentials (the secret too) and chat links, and hands the team agents and shared credentials they created to
+  `--transfer-to` (a person of the tenant who is not offboarded) or, by default, to you. Finished tasks stay until
+  retention removes them. You cannot offboard yourself.
+- **It is a dry run unless you say `--apply`**, and the dry run prints the same report as the real thing. It cannot be
+  undone: `readmit` lets the person in again but brings nothing back.
+- **Repeating it is safe.** If the cluster or the secret store does not answer half way, `dynfarm` shows what was
+  already done and exits 1; run the same command again to finish.
+- The report has names and counts only, never a secret value.
 
 ## Raw API calls
 
@@ -357,6 +385,7 @@ Every command takes `--help`. Those that read from the farm take `--json` (the f
 | `dynfarm agent list`, `view`, `create`, `edit`, `delete` | See the agents you can launch and manage your own and your team's |
 | `dynfarm schedule list`, `view`, `create`, `runs`, `fire`, `pause`, `resume`, `delete` | Have the farm launch a task on a cron |
 | `dynfarm credential list`, `view`, `set`, `delete` | Hand a secret to the farm (never on the command line), see its metadata, delete it |
+| `dynfarm person list`, `view`, `offboard`, `readmit` | Tenant admins: find a person by `person_id`, offboard them in one step (a dry run unless `--apply`), readmit them |
 | `dynfarm api` | Any other call to the farm's API, like `gh api` |
 | `dynfarm completion bash`, `zsh`, `fish` | The shell's tab-completion script |
 

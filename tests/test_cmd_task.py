@@ -152,7 +152,7 @@ def test_run_takes_what_has_no_flag_from_a_body_file(run_cli, fake_farm, tmp_pat
         "input": "Review MR 7.",
         "workspace": {"repo": "https://gitlab.example.test/group/project.git", "ref": "main"},
         "limits": {"timeout_s": 600},
-        "callback": {"url": "https://ci.example.test/hook"},
+        "notify": [{"kind": "url", "url": "https://ci.example.test/hook", "format": "json", "events": ["final"]}],
     }
     (tmp_path / "task.json").write_text(json.dumps(spec), encoding="utf-8")
     result = run_cli(["task", "run", "--body-file", str(tmp_path / "task.json")])

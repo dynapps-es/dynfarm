@@ -58,6 +58,7 @@ CREDENTIAL_COLUMNS = (
     Column("name", "name"),
     Column("type", "type"),
     Column("scope", "scope"),
+    Column("owner", "owner"),
     Column("fingerprint", "fingerprint"),
     Column("expires", "expires_at", "date"),
     Column("updated", "updated_at", "date"),
@@ -66,6 +67,18 @@ CREDENTIAL_COLUMNS = (
 
 def _scope_option(fn: Any) -> Any:
     return click.option("--scope", type=click.Choice(["personal", "shared"]), help=SCOPE_OPTION_HELP)(fn)
+
+
+def _owner_option(action: str) -> Any:
+    def decorate(fn: Any) -> Any:
+        return click.option(
+            "--owner",
+            metavar="SUBJECT",
+            help=f"Administrators only: {action} another person's personal credential (their subject, as `owner` "
+            "shows it).",
+        )(fn)
+
+    return decorate
 
 
 @click.group()
@@ -78,12 +91,18 @@ def credential() -> None:
 
 @credential.command("list")
 @_scope_option
+@_owner_option("list only the credentials of")
 @click.option("--json", "json_flag", is_flag=True, help=JSON_HELP)
 @operation("list_credentials")
 @needs_client
-def list_(client: FarmClient, scope: str | None, json_flag: bool) -> None:
-    """List your credentials (or your team's with --scope shared): name, type, fingerprint, expiry. Never a value."""
-    found = client.request("GET", "/credentials", params={"scope": scope}, operation_id="list_credentials")
+def list_(client: FarmClient, scope: str | None, owner: str | None, json_flag: bool) -> None:
+    """List your credentials (or your team's with --scope shared): name, type, owner, expiry. Never a value.
+
+    A tenant admin sees the whole tenant's personal credentials, each with its owner.
+    """
+    found = client.request(
+        "GET", "/credentials", params={"scope": scope, "owner": owner}, operation_id="list_credentials"
+    )
     emit(found, json_flag=json_flag, table=CREDENTIAL_COLUMNS)
 
 
@@ -93,13 +112,17 @@ def list_(client: FarmClient, scope: str | None, json_flag: bool) -> None:
 @credential.command()
 @click.argument("name")
 @_scope_option
+@_owner_option("show")
 @click.option("--json", "json_flag", is_flag=True, help=JSON_HELP)
 @operation("get_credential")
 @needs_client
-def view(client: FarmClient, name: str, scope: str | None, json_flag: bool) -> None:
+def view(client: FarmClient, name: str, scope: str | None, owner: str | None, json_flag: bool) -> None:
     """Show what the farm keeps about a credential: its type, fingerprint, description, metadata and dates."""
     found = client.request(
-        "GET", f"/credentials/{segment(name)}", params={"scope": scope}, operation_id="get_credential"
+        "GET",
+        f"/credentials/{segment(name)}",
+        params={"scope": scope, "owner": owner},
+        operation_id="get_credential",
     )
     if json_flag:
         emit(found, json_flag=True)
@@ -108,6 +131,7 @@ def view(client: FarmClient, name: str, scope: str | None, json_flag: bool) -> N
     rows = [
         ("name", found.get("name")),
         ("scope", found.get("scope")),
+        ("owner", found.get("owner")),
         ("type", found.get("type")),
         ("fingerprint", found.get("fingerprint")),
         ("description", found.get("description")),
@@ -331,19 +355,28 @@ def _masked(exc: FarmError, value: str) -> FarmError:
 @credential.command()
 @click.argument("name")
 @_scope_option
+@_owner_option("delete")
 @click.option("--yes", "-y", is_flag=True, help="Do not ask for confirmation.")
 @operation("delete_credential")
 @needs_client
-def delete(client: FarmClient, name: str, scope: str | None, yes: bool) -> None:
+def delete(client: FarmClient, name: str, scope: str | None, owner: str | None, yes: bool) -> None:
     """Delete a credential and its stored secret. Irreversible.
 
     Tasks already running keep the copy they were given; the next task or schedule that names it fails. Deleting a
     shared credential leaves the team's agents that declare it unlaunchable until it is written again.
     """
     shared = scope == "shared"
-    commands.confirm(f"Delete {'shared ' if shared else ''}credential {name}? Its secret cannot be recovered.", yes=yes)
-    client.request("DELETE", f"/credentials/{segment(name)}", params={"scope": scope}, operation_id="delete_credential")
-    click.echo(f"deleted {'shared ' if shared else ''}credential {name}")
+    whose = f" of {owner}" if owner and not shared else ""
+    commands.confirm(
+        f"Delete {'shared ' if shared else ''}credential {name}{whose}? Its secret cannot be recovered.", yes=yes
+    )
+    client.request(
+        "DELETE",
+        f"/credentials/{segment(name)}",
+        params={"scope": scope, "owner": owner},
+        operation_id="delete_credential",
+    )
+    click.echo(f"deleted {'shared ' if shared else ''}credential {name}{whose}")
     note = "running tasks keep their copy; new tasks that name it will fail"
     if shared:
         note += ", and the team's agents that declare it cannot be launched until it is written again"
