@@ -33,7 +33,7 @@ from typing import Any
 
 import click
 import pytest
-from fakefarm import ALICE
+from fakefarm import ADMIN, ALICE, TENANT
 
 from dynfarm.cli import cli
 from dynfarm.registry import load_all_commands, registered
@@ -44,7 +44,14 @@ PINNED = Path(__file__).parent / "fixtures" / "openapi.json"
 SPEC_PATH = os.environ.get("DYNFARM_PARITY_OPENAPI")
 
 #: operationId -> why this API operation deliberately has no command. Empty: every operation has one.
-EXCLUDED: dict[str, str] = {}
+EXCLUDED: dict[str, str] = {
+    "create_link_code": "no command yet",
+    "get_transcript": "no command yet",
+    "issue_credential_upload": "no command yet",
+    "mark_task_viewed": "no command yet",
+    "update_schedule": "no command yet",
+    "upload_credential_value": "no command yet",
+}
 
 #: (command path, parameter name) of every `click.Choice` that mirrors an API enum -> (schema, property) it must equal.
 CHOICES_FROM_THE_API: dict[tuple[tuple[str, ...], str], tuple[str, str]] = {
@@ -58,6 +65,7 @@ CHOICES_FROM_THE_API: dict[tuple[tuple[str, ...], str], tuple[str, str]] = {
     (("credential", "list"), "scope"): ("CredentialCreate", "scope"),
     (("credential", "view"), "scope"): ("CredentialCreate", "scope"),
     (("credential", "delete"), "scope"): ("CredentialCreate", "scope"),
+    (("person", "list"), "kind"): ("PersonOut", "kind"),
 }
 
 #: `click.Choice`s that are not the API's: `dynfarm api -X`, and the shells `dynfarm completion` can print for.
@@ -332,11 +340,12 @@ def json_cases(fake_farm, run_cli) -> list[tuple[list[str], str]]:
     )
     schedule_id = created["schedule_id"]
     assert run_cli(["credential", "set", "parity-key", "--type", "generic"], input="not-a-real-secret\n").exit_code == 0
+    person_id = fake_farm._person(TENANT, "alice")["person_id"]
     assert run_cli(["agent", "create", "parity-agent", "--scope", "personal", "--instructions", "hi"]).exit_code == 0
     return [
         (["whoami"], "whoami"),
         (["plugin", "list"], "list_plugins"),
-        (["callback-key"], "callback_key"),  # prints the JWK as JSON already: it has no --json
+        (["callback-key"], "notify_key"),  # prints the JWK as JSON already: it has no --json
         (["agent", "list"], "list_agents"),
         (["agent", "view", "parity-agent"], "get_agent"),
         (["task", "list"], "list_tasks"),
@@ -350,13 +359,16 @@ def json_cases(fake_farm, run_cli) -> list[tuple[list[str], str]]:
         (["schedule", "pause", schedule_id], "pause_schedule"),
         (["credential", "list"], "list_credentials"),
         (["credential", "view", "parity-key"], "get_credential"),
+        (["person", "list"], "list_people"),
+        (["person", "view", person_id], "get_person"),
     ]
 
 
 def test_every_json_output_has_only_keys_the_response_schema_declares(fake_farm, run_cli):
     checked = 0
     for args, operation_id in json_cases(fake_farm, run_cli):
-        result = run_cli(args if args == ["callback-key"] else [*args, "--json"])
+        as_admin = {"token": ADMIN} if args[0] == "person" else {}  # listing people is for a tenant admin
+        result = run_cli(args if args == ["callback-key"] else [*args, "--json"], **as_admin)
         assert result.exit_code == 0, (args, result.output)
         stray = stray_keys(SPEC, response_schema(SPEC, operation_id), json.loads(result.stdout))
         assert_none(
@@ -366,7 +378,7 @@ def test_every_json_output_has_only_keys_the_response_schema_declares(fake_farm,
             ]
         )
         checked += 1
-    assert checked == 16
+    assert checked == 18
 
 
 # -- proof that the checks can fail (a check that cannot is not a gate) ----------------------------------------------
@@ -391,10 +403,13 @@ def test_a_spec_that_dropped_an_operation_makes_its_command_stale(mutable, wired
 
 def test_an_exclusion_needs_a_reason_and_a_real_unwired_operation(wired):
     spec = load_spec(None)
-    assert parity_problems(spec, wired - {"whoami"}, {"whoami": "the farm can tell who you are another way"}) == []
-    assert any("without a reason" in p for p in parity_problems(spec, wired - {"whoami"}, {"whoami": " "}))
-    assert any("no longer has" in p for p in parity_problems(spec, wired, {"gone_op": "x"}))
-    assert any("now have a command" in p for p in parity_problems(spec, wired, {"whoami": "x"}))
+    assert (
+        parity_problems(spec, wired - {"whoami"}, {**EXCLUDED, "whoami": "the farm can tell who you are another way"})
+        == []
+    )
+    assert any("without a reason" in p for p in parity_problems(spec, wired - {"whoami"}, {**EXCLUDED, "whoami": " "}))
+    assert any("no longer has" in p for p in parity_problems(spec, wired, {**EXCLUDED, "gone_op": "x"}))
+    assert any("now have a command" in p for p in parity_problems(spec, wired, {**EXCLUDED, "whoami": "x"}))
 
 
 def test_an_extra_value_in_an_api_enum_fails_the_choice_check(mutable):
@@ -457,7 +472,7 @@ def test_a_field_the_api_removed_fails_the_column_check(mutable):
 
 
 def test_a_nested_field_the_api_removed_fails_the_column_check(mutable):
-    recurrence = deref(mutable, mutable["components"]["schemas"]["ScheduleOut"]["properties"]["recurrence"])
+    recurrence = deref(mutable, mutable["components"]["schemas"]["ScheduleOut"]["properties"]["recurrence"]["anyOf"][0])
     del recurrence["properties"]["cron"]
     problems = column_problems(mutable, table_columns())
     assert problems == ["SCHEDULE_COLUMNS reads `recurrence.cron`, which a row of list_schedules no longer has"]

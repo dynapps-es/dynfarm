@@ -63,6 +63,10 @@ def test_whoami_json_is_the_farms_answer_verbatim(run_cli):
         "is_admin": False,
         "expires_at": "2027-01-01T00:00:00Z",
         "free_prompt": True,
+        "permission_ceiling": "ask",
+        "gateway_identity": {"user_credential": False},
+        "gateway_identity_default": "service",
+        "schedules": {"used": 0, "max_per_user": None, "max_tenant": 20},
     }
 
 
@@ -150,7 +154,7 @@ def test_callback_key_prints_the_key_exactly_as_the_farm_sent_it(run_cli, fake_f
     answer = json.loads(result.stdout)
     assert answer["keys"][0]["kid"] == "fake-key-1" and answer["keys"][0]["crv"] == "Ed25519"
     assert answer["keys"][0]["pem"] == "-----BEGIN PUBLIC KEY-----\nFAKE\n-----END PUBLIC KEY-----\n"
-    assert answer == fake_farm._op_callback_key(None)[1]
+    assert answer == fake_farm._op_notify_key(None)[1]
 
 
 def test_callback_key_pem_prints_only_the_pem_ready_for_a_file(run_cli):
@@ -160,7 +164,7 @@ def test_callback_key_pem_prints_only_the_pem_ready_for_a_file(run_cli):
 
 
 def test_callback_key_pem_says_so_when_the_farm_sent_none(run_cli, fake_farm):
-    fake_farm.override("callback_key", lambda call: (200, {"keys": []}))
+    fake_farm.override("notify_key", lambda call: (200, {"keys": []}))
     result = run_cli(["callback-key", "--pem"])
     assert result.exit_code == 1 and "no PEM key" in result.stderr
 
@@ -174,7 +178,7 @@ def test_the_commands_declare_the_operations_they_call():
     for operation_id, command in (
         ("whoami", "identity.whoami"),
         ("list_plugins", "identity.list_plugins"),
-        ("callback_key", "identity.callback_key"),
+        ("notify_key", "identity.callback_key"),
     ):
         assert any(name.endswith(command) for name in declared[operation_id]), operation_id
 

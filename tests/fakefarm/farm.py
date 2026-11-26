@@ -54,13 +54,14 @@ TASK_SCOPES = ("farm:tasks:read", "farm:tasks:write", "farm:tasks:cancel")
 CREDENTIAL_SCOPES = ("farm:credentials:read", "farm:credentials:write")
 TERMINAL = ("succeeded", "failed", "cancelled", "expired")
 
-ALICE, BOB, OTHER, EXPIRED, ADMIN, READONLY = (
+ALICE, BOB, OTHER, EXPIRED, ADMIN, READONLY, PLATFORM = (
     "tok-alice",
     "tok-bob",
     "tok-other-tenant",
     "tok-expired",
     "tok-admin",
     "tok-readonly",
+    "tok-platform",
 )
 
 
@@ -85,6 +86,9 @@ def _principals() -> dict[str, Principal]:
         EXPIRED: Principal("alice", TENANT, everything, expires_at="2026-09-30T08:00:00Z"),
         ADMIN: Principal("dana", TENANT, everything | {"farm:tenant:admin"}),
         READONLY: Principal("erin", TENANT, frozenset(("farm:tasks:read", "farm:credentials:read"))),
+        PLATFORM: Principal(
+            "pat", TENANT, frozenset(("farm:tasks:read", "farm:credentials:read", "farm:platform:read"))
+        ),
     }
 
 
@@ -165,6 +169,11 @@ class FakeFarm:
         self._schedules: dict[str, dict[str, Any]] = {}
         self._credentials: dict[tuple[str, str, str | None, str], dict[str, Any]] = {}
         self._agents: list[dict[str, Any]] = _platform_agents()
+        self._people: dict[str, dict[str, Any]] = {}
+        self._extras: dict[tuple[str, str], dict[str, Any]] = {}
+        for principal in self.tokens.values():
+            self._person(principal.tenant, principal.subject)
+        self._person(TENANT, "ci-bot", kind="service")
         self._plugins = [
             {
                 "name": "example-plugin",
@@ -381,6 +390,9 @@ class FakeFarm:
                 details={"expires_at": principal.expires_at},
                 headers={"WWW-Authenticate": 'Bearer error="invalid_token", error_description="expired"'},
             )
+        person = self._person(principal.tenant, principal.subject)
+        if person["offboarded_at"] is not None:
+            raise ApiProblem(403, "person_offboarded", "this person was offboarded; a tenant admin can readmit them")
         return principal
 
     def _read_query(self, route: Route, query: dict[str, list[str]]) -> dict[str, Any]:
@@ -564,7 +576,6 @@ class FakeFarm:
     ) -> TaskRow:
         task_id = self._new_id("task")
         workspace = body.get("workspace")
-        callback = body.get("callback")
         limits = {"timeout_s": 900, "cpu": "1", "memory": "2Gi", "ttl_s": 3600}
         limits.update({k: v for k, v in (body.get("limits") or {}).items() if v is not None})
         data: dict[str, Any] = {
@@ -606,17 +617,6 @@ class FakeFarm:
             }
             if workspace
             else None,
-            "callback": {
-                "url": callback["url"],
-                "status": "pending",
-                "attempts": 0,
-                "last_error": None,
-                "last_attempt_at": None,
-                "next_attempt_at": None,
-                "delivered_at": None,
-            }
-            if callback
-            else None,
             "queue_position": None,
             "usage": None,
             "result": None,
@@ -653,9 +653,17 @@ class FakeFarm:
             "is_admin": p.is_admin,
             "expires_at": p.expires_at,
             "free_prompt": self.free_prompt,
+            "permission_ceiling": "ask",
+            "gateway_identity": {"user_credential": False},
+            "gateway_identity_default": "service",
+            "schedules": {
+                "used": sum(1 for r in self._schedules.values() if r["tenant"] == p.tenant and r["owner"] == p.subject),
+                "max_per_user": None,
+                "max_tenant": self.limits["max_schedules"],
+            },
         }
 
-    def _op_callback_key(self, call: Call) -> tuple[int, Any]:
+    def _op_notify_key(self, call: Call) -> tuple[int, Any]:
         key = {
             "kid": "fake-key-1",
             "kty": "OKP",
@@ -1073,8 +1081,10 @@ class FakeFarm:
 
     # -- operations: credentials ------------------------------------------------------------------------------
 
-    def _credential_key(self, principal: Principal, scope: str, name: str) -> tuple[str, str, str | None, str]:
-        return (principal.tenant, scope, principal.subject if scope == "personal" else None, name)
+    def _credential_key(
+        self, principal: Principal, scope: str, name: str, subject: str | None = None
+    ) -> tuple[str, str, str | None, str]:
+        return (principal.tenant, scope, (subject or principal.subject) if scope == "personal" else None, name)
 
     @staticmethod
     def _credential_out(row: dict[str, Any]) -> dict[str, Any]:
@@ -1100,6 +1110,7 @@ class FakeFarm:
         row = existing or {
             "name": name,
             "scope": scope,
+            "owner": p.subject if scope == "personal" else None,
             "tenant": p.tenant,
             "metadata": {},
             "description": None,
@@ -1122,11 +1133,16 @@ class FakeFarm:
         return (200 if existing else 201), self._credential_out(row)
 
     def _op_list_credentials(self, call: Call) -> tuple[int, Any]:
-        p, scope = call.principal, call.query["scope"]
+        p, scope, owner = call.principal, call.query["scope"], call.query.get("owner")
+        if scope == "personal" and owner and owner != p.subject and not p.is_admin:
+            raise ApiProblem(404, "credentials_not_found", "no such credential")
         rows = [
             r
             for k, r in self._credentials.items()
-            if k[0] == p.tenant and k[1] == scope and (scope == "shared" or self._owns(p, k[0], k[2]))
+            if k[0] == p.tenant
+            and k[1] == scope
+            and (scope == "shared" or self._owns(p, k[0], k[2]))
+            and (not owner or scope == "shared" or k[2] == owner)
         ]
         return 200, {"items": [self._credential_out(r) for r in sorted(rows, key=lambda r: r["name"])]}
 
@@ -1139,7 +1155,10 @@ class FakeFarm:
                 "a shared credential needs farm:tenant:admin",
                 details={"required": ["farm:tenant:admin"]},
             )
-        key = self._credential_key(p, scope, name)
+        owner = call.query.get("owner")
+        if scope == "personal" and owner and owner != p.subject and not p.is_admin:
+            raise ApiProblem(404, "credentials_not_found", f"no credential '{name}'")
+        key = self._credential_key(p, scope, name, owner)
         row = self._credentials.get(key)
         if row is None:
             raise ApiProblem(404, "credentials_not_found", f"no credential '{name}'")
@@ -1153,6 +1172,195 @@ class FakeFarm:
         del self._credentials[key]
         del self.credential_values[key]
         return 204, None
+
+    # -- operations: people -----------------------------------------------------------------------------------
+
+    def _person(self, tenant: str, subject: str, *, kind: str = "person") -> dict[str, Any]:
+        """The person of a tenant, created on first sight like the farm does (a stable id per tenant and subject)."""
+        for row in self._people.values():
+            if row["tenant"] == tenant and row["subject"] == subject:
+                return row
+        person_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"fakefarm/person/{tenant}/{subject}"))
+        row = {
+            "person_id": person_id,
+            "subject": subject,
+            "kind": kind,
+            "tenant": tenant,
+            "first_seen_at": "2026-10-01T09:00:00Z",
+            "admin_seen_at": None,
+            "offboarded_at": None,
+            "offboarded_by": None,
+        }
+        self._people[person_id] = row
+        return row
+
+    def _people_view(self, call: Call) -> list[dict[str, Any]]:
+        """The rows the caller may read: the own tenant for an admin, any tenant for a `farm:platform:read` key."""
+        p, tenant = call.principal, call.query.get("tenant")
+        if tenant is None:
+            if not p.is_admin:
+                raise ApiProblem(
+                    403,
+                    "insufficient_scope",
+                    "listing people needs farm:tenant:admin",
+                    details={"required": ["farm:tenant:admin"]},
+                )
+            tenant = p.tenant
+        elif "farm:platform:read" not in p.scopes:
+            raise ApiProblem(
+                403,
+                "insufficient_scope",
+                "reading another tenant needs farm:platform:read",
+                details={"required": ["farm:platform:read"]},
+            )
+        return [r for r in self._people.values() if tenant == "*" or r["tenant"] == tenant]
+
+    def _op_list_people(self, call: Call) -> tuple[int, Any]:
+        rows = self._people_view(call)
+        kind, offboarded = call.query.get("kind"), call.query.get("offboarded")
+        if kind:
+            rows = [r for r in rows if r["kind"] == kind]
+        if offboarded is not None:
+            rows = [r for r in rows if (r["offboarded_at"] is not None) == offboarded]
+        return 200, {"items": sorted(rows, key=lambda r: (r["tenant"], r["subject"]))}
+
+    def _person_for(self, call: Call, *, platform: bool = False) -> dict[str, Any]:
+        row = self._people.get(call.path["person_id"])
+        tenant = call.query.get("tenant") if platform else None
+        if row is not None and platform and tenant is not None:
+            if "farm:platform:read" not in call.principal.scopes:
+                row = None
+        elif row is not None and row["tenant"] != call.principal.tenant:
+            row = None
+        if row is None:
+            raise ApiProblem(404, "not_found", "no such person")
+        return row
+
+    def _op_get_person(self, call: Call) -> tuple[int, Any]:
+        if call.query.get("tenant") is None and not call.principal.is_admin:
+            raise ApiProblem(
+                403,
+                "insufficient_scope",
+                "viewing a person needs farm:tenant:admin",
+                details={"required": ["farm:tenant:admin"]},
+            )
+        return 200, self._person_for(call, platform=True)
+
+    def seed_extras(self, subject: str, tenant: str = TENANT, **extras: Any) -> None:
+        """What the model does not keep by itself, so an offboarding report has it: `team_agents` and
+        `shared_credentials` (handed to the recipient), `channel_links` (`[{"channel", "count"}]`), `channel_people`
+        (`[{"channel", "active"}]`), `link_codes` and `upload_tickets`. A real offboarding consumes them."""
+        self._extras[(tenant, subject)] = extras
+
+    def _owned_by(self, tenant: str, subject: str) -> dict[str, list[Any]]:
+        return {
+            "tasks": [
+                r
+                for r in self._tasks.values()
+                if r.data["tenant"] == tenant and r.data["owner"] == subject and r.data["state"] not in TERMINAL
+            ],
+            "schedules": [s for s in self._schedules.values() if s["tenant"] == tenant and s["owner"] == subject],
+            "agents": [
+                a for a in self._agents if a["scope"] == "personal" and a["_tenant"] == tenant and a["owner"] == subject
+            ],
+            "credentials": [
+                r for k, r in self._credentials.items() if k[0] == tenant and k[1] == "personal" and k[2] == subject
+            ],
+        }
+
+    def _op_offboard_person(self, call: Call) -> tuple[int, Any]:
+        p, body = call.principal, call.body or {}
+        person = self._person_for(call)
+        if person["subject"] == p.subject:
+            raise ApiProblem(409, "cannot_offboard_self", "you cannot offboard yourself")
+        recipient = self._person(p.tenant, p.subject)
+        if body.get("transfer_to"):
+            recipient = self._people.get(body["transfer_to"])
+            reason = (
+                "not_found"
+                if recipient is None or recipient["tenant"] != p.tenant
+                else "same_person"
+                if recipient is person
+                else "service"
+                if recipient["kind"] == "service"
+                else "offboarded"
+                if recipient["offboarded_at"]
+                else None
+            )
+            if reason:
+                raise ApiProblem(
+                    422,
+                    "transfer_to_invalid",
+                    f"transfer_to cannot receive the team's things ({reason})",
+                    details={"reason": reason},
+                )
+        dry_run = body.get("dry_run", True)
+        owned = self._owned_by(person["tenant"], person["subject"])
+        found = {
+            "tasks": [
+                {"task_id": r.data["task_id"], "state": r.data["state"], "agent_id": r.data["agent_id"]}
+                for r in owned["tasks"]
+            ],
+            "schedules": [
+                {"schedule_id": s["schedule_id"], "name": s.get("name"), "gateway_identity": None, "state": s["state"]}
+                for s in owned["schedules"]
+            ],
+            "agents": [a["slug"] for a in owned["agents"]],
+            "credentials": [{"name": c["name"], "type": c["type"]} for c in owned["credentials"]],
+        }
+        extras = self._extras.get((person["tenant"], person["subject"]), {})
+        if not dry_run:
+            self._extras.pop((person["tenant"], person["subject"]), None)
+            person["offboarded_at"], person["offboarded_by"] = self._ts(), p.subject
+            for row in owned["tasks"]:
+                self.set_task(row.data["task_id"], state="cancelled")
+            for schedule in owned["schedules"]:
+                del self._schedules[schedule["schedule_id"]]
+            for agent in owned["agents"]:
+                self._agents.remove(agent)
+            for key in [k for k, r in self._credentials.items() if r in owned["credentials"]]:
+                del self._credentials[key]
+                self.credential_values.pop(key, None)
+        counts = {name: len(items) for name, items in found.items()}
+        links = extras.get("channel_links", [])
+        team_agents, shared = extras.get("team_agents", []), extras.get("shared_credentials", [])
+        counts.update(
+            channel_links=sum(link["count"] for link in links),
+            link_codes=extras.get("link_codes", 0),
+            upload_tickets=extras.get("upload_tickets", 0),
+            transferred_agents=len(team_agents),
+            transferred_credentials=len(shared),
+        )
+        channel_people = extras.get("channel_people", [])
+        service = person["kind"] == "service"
+        return 200, {
+            "person": person,
+            "dry_run": dry_run,
+            "counts": counts,
+            **found,
+            "channel_links": links,
+            "channel_people": channel_people,
+            "channel_people_warning": (
+                "the channel's list of e-mails still names the person: remove them there (GitOps)"
+                if channel_people
+                else None
+            ),
+            "transfer": {
+                "to": {"person_id": recipient["person_id"], "subject": recipient["subject"], "kind": recipient["kind"]},
+                "agents": team_agents,
+                "credentials": shared,
+                "warning": "the recipient is an integration's key" if recipient["kind"] == "service" else None,
+            },
+            "service_warning": "blocking this key stops every integration that uses it" if service else None,
+            "history": {"finished_tasks": 0, "note": "finished tasks stay until retention removes them"},
+        }
+
+    def _op_readmit_person(self, call: Call) -> tuple[int, Any]:
+        person = self._person_for(call)
+        if person["offboarded_at"] is None:
+            raise ApiProblem(409, "person_not_offboarded", "the person is not offboarded")
+        person["offboarded_at"] = person["offboarded_by"] = None
+        return 200, person
 
 
 def _instant(text: str) -> datetime:
