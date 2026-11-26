@@ -47,7 +47,7 @@ def new_schedule(farm: FakeFarm, token: str = ALICE) -> str:
 
 def test_every_operation_of_the_pinned_openapi_is_served_and_nothing_else(fake_farm):
     assert set(fake_farm._handlers) == fake_farm.openapi.operation_ids
-    assert len(fake_farm.openapi.operation_ids) == 26
+    assert len(fake_farm.openapi.operation_ids) == 27
 
 
 def test_an_unknown_operation_is_refused_and_recorded_as_a_violation(fake_farm):

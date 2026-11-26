@@ -16,8 +16,9 @@ First release: a command-line client for the Dynapps Agent Farm API.
   keyring and the file, in that order. Every environment variable of the tool starts with `DYNFARM_`; those of other tools
   are not read. `auth status` tells an expired token from an invalid one and never prints it. A
   token is never sent over plain `http` except to a loopback address.
-- **Tasks**: `dynfarm task run|list|view|watch|logs|result|cancel`, with `last` for your newest task, `--watch` and
-  `--exit-status` for scripts, and result downloads checked against the farm's checksum.
+- **Tasks**: `dynfarm task run|list|view|watch|logs|result|cancel|answer`, with `last` for your newest task, `--watch`
+  and `--exit-status` for scripts, and result downloads checked against the farm's checksum. `task answer` replies to
+  the question a running task's agent is waiting on, which `task view` shows with its number.
 - **Agents**: `dynfarm agent list|view|create|edit|delete`, from flags or a JSON file.
 - **Schedules**: `dynfarm schedule list|view|create|runs|fire|pause|resume|delete`.
 - **Credentials**: `dynfarm credential list|view|set|delete`. The secret is read only from a hidden prompt, standard
