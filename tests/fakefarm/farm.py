@@ -142,6 +142,8 @@ class TaskRow:
     logs: list[str] = field(default_factory=list)
     schedule_id: str | None = None
     result_expired: bool = False
+    questions: int = 0
+    answers: list[dict[str, Any]] = field(default_factory=list)
 
 
 class FakeFarm:
@@ -266,6 +268,19 @@ class FakeFarm:
         row = self._schedules[schedule_id]
         row.update(fields)
         row["updated_at"] = self._ts()
+
+    def ask(self, task_id: str, text: str, *, kind: str = "ask") -> int:
+        """The task's agent asks a person something: the task waits for an answer. Returns the question's `seq`."""
+        row = self._tasks[task_id]
+        row.questions += 1
+        options = ["Allow", "Deny"] if kind == "permission" else None
+        question = {"seq": row.questions, "text": text, "asked_at": self._ts(), "kind": kind, "options": options}
+        self.set_task(task_id, state="running", waiting_input=True, question=question)
+        return row.questions
+
+    def answers(self, task_id: str) -> list[dict[str, Any]]:
+        """What was answered to the task's questions, in order: `{seq, answer, by}`."""
+        return list(self._tasks[task_id].answers)
 
     def expire_result(self, task_id: str) -> None:
         self._tasks[task_id].result_expired = True
@@ -731,6 +746,22 @@ class FakeFarm:
         self.set_task(row.data["task_id"], state="cancelled")
         d = row.data
         return 202, {"task_id": d["task_id"], "tenant": d["tenant"], "scope": d["scope"], "state": "cancelled"}
+
+    def _op_answer_task(self, call: Call) -> tuple[int, Any]:
+        """As `task_questions.answer`: the open question only, its `seq` if sent, a permission one by its owner."""
+        row = self._task_for(call)
+        question = row.data.get("question") if row.data.get("waiting_input") else None
+        seq = call.body.get("seq")
+        if question is None or row.data["state"] in TERMINAL or (seq is not None and seq != question["seq"]):
+            raise ApiProblem(409, "no_open_question", "the task has no open question with that number")
+        if question["kind"] == "permission":
+            if call.principal.subject != row.data["owner"]:
+                raise ApiProblem(403, "answer_owner_only", "only the task's owner answers a permission question")
+            if seq is None or call.body["answer"] not in question["options"]:
+                raise ApiProblem(422, "answer_invalid", "a permission question takes Allow or Deny, with its seq")
+        row.answers.append({"seq": question["seq"], "answer": call.body["answer"], "by": call.principal.subject})
+        self.set_task(row.data["task_id"], waiting_input=False, question=None)
+        return 200, {"seq": question["seq"], "answered_at": self._ts()}
 
     def _op_get_logs(self, call: Call) -> tuple[int, Any]:
         row = self._task_for(call)

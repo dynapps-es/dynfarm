@@ -2,7 +2,7 @@
 
     task run [AGENT]   POST /tasks            task list    GET /tasks            task logs    GET /tasks/{id}/logs
     task view ID       GET  /tasks/{id}       task watch   GET /tasks/{id}?wait= task result  GET /tasks/{id}/result
-    task cancel ID     DELETE /tasks/{id}
+    task cancel ID     DELETE /tasks/{id}      task answer  POST /tasks/{id}/answer
 
 Where an ID is expected, `last` is the newest task *you* launched (`GET /tasks?owner=me&limit=1`): `owner=me` matters
 to a tenant admin, who otherwise sees everyone's and would get somebody else's task.
@@ -22,6 +22,10 @@ Choices worth knowing:
   that has no `Authorization` header, so the farm's token never reaches another host. The file is checked against the
   `sha256` the farm gave, written beside its destination and renamed into place, and an existing file is not replaced
   without `--force`.
+- **`answer` replies to the question a running task's agent is waiting on** (`waiting_input: true`; `view` shows
+  the question with its number). The text goes to the agent as written. `--seq` names the question being answered,
+  so an answer never lands on a newer one; a `permission` question (the agent asks to use a tool) needs it and takes
+  only `Allow` or `Deny`. The farm decides who may answer and says why when it refuses.
 - Everything from the farm that a person or an agent wrote (prompt, input, log lines, the summary) is cleaned of
   control characters before it reaches the terminal.
 """
@@ -43,6 +47,7 @@ from dynfarm.config import is_loopback
 from dynfarm.context import AppContext
 from dynfarm.errors import ConfigError, DynfarmError, FarmError
 from dynfarm.http import FarmClient, needs_client, segment
+from dynfarm.inputs import read_text
 from dynfarm.output import Column, clean_text, emit
 from dynfarm.registry import operation
 from dynfarm.taskbody import (
@@ -137,6 +142,7 @@ def _fields(task_data: dict[str, Any]) -> list[tuple[str, Any]]:
         ("session", task_data.get("session_ref")),
         ("repository", workspace.get("repo")),
         ("callback", callback.get("status")),
+        ("waiting", "for an answer (dynfarm task answer)" if task_data.get("waiting_input") else None),
     ]
 
 
@@ -154,6 +160,14 @@ def _print_task(task_data: dict[str, Any], *, json_flag: bool) -> None:
             click.echo(f"{label}:")
             for line in clean_text(str(task_data[label]), multiline=True).splitlines():
                 click.echo(f"  {line}")
+    question = task_data.get("question") if task_data.get("waiting_input") else None
+    if question:
+        options = question.get("options") or []
+        heading = f"question #{question.get('seq')} ({question.get('kind')}"
+        heading += f", answer {' or '.join(str(o) for o in options)})" if options else ")"
+        click.echo(f"{clean_text(heading)}:")
+        for line in clean_text(str(question.get("text") or ""), multiline=True).splitlines():
+            click.echo(f"  {line}")
 
 
 def _follow(client: FarmClient, task_id: str) -> dict[str, Any]:
@@ -454,3 +468,44 @@ def cancel(client: FarmClient, task_id: str, yes: bool, json_flag: bool) -> None
         emit(answer, json_flag=True)
     else:
         click.echo(f"cancelled task {answer['task_id']}")
+
+
+# -- answer -------------------------------------------------------------------------------------------------------
+
+
+@task.command()
+@_task_arg
+@click.argument("text", required=False)
+@click.option("--from-file", "from_file", metavar="FILE", help="Read the answer from FILE (`-` for standard input).")
+@click.option(
+    "--seq",
+    type=click.IntRange(min=1),
+    help="The number of the question you answer, as `task view` shows it. Required for a permission question.",
+)
+@click.option("--json", "json_flag", is_flag=True, help=JSON_HELP)
+@operation("answer_task", "list_tasks")
+@needs_client
+def answer(
+    client: FarmClient, task_id: str, text: str | None, from_file: str | None, seq: int | None, json_flag: bool
+) -> None:
+    """Answer the question a running task's agent is waiting on; it carries on with its work.
+
+    \b
+    dynfarm task view last                       # the question and its number
+    dynfarm task answer last "Use the staging database." --seq 1
+    dynfarm task answer 01J... Allow --seq 2     # a permission question: Allow or Deny
+    """
+    if (text is None) == (from_file is None):
+        raise ConfigError("give the answer as TEXT or with --from-file, not both and not neither")
+    reply = text if text is not None else read_text(from_file or "-", "--from-file")
+    if not reply.strip():
+        raise ConfigError("the answer is empty")
+    task_id = resolve_task_id(client, task_id)
+    body: dict[str, Any] = {"answer": reply}
+    if seq is not None:
+        body["seq"] = seq
+    answered = client.request("POST", _path(task_id, "/answer"), json=body, operation_id="answer_task")
+    if json_flag:
+        emit(answered, json_flag=True)
+    else:
+        click.echo(f"answered question #{answered['seq']} of task {task_id}")

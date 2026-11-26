@@ -164,6 +164,7 @@ dynfarm task watch last --exit-status                     # waits on the farm; C
 dynfarm task logs last --tail 50
 dynfarm task result last --download result.json           # summary and link; --download saves the file
 dynfarm task cancel last                                  # asks first; --yes in scripts
+dynfarm task answer last "Use the staging database." --seq 1   # reply to the question the agent is waiting on
 ```
 
 - **What `run` sends.** An `AGENT` (an `agent_id`; it needs an `--input`) or a `--prompt`, never both, plus `--scope`
@@ -184,6 +185,11 @@ dynfarm task cancel last                                  # asks first; --yes in
 - **`task result`** shows the summary, the usage and a link to the full result. `--download PATH` fetches it from the
   object store without sending the farm's token, checks it against the farm's checksum, and will not replace an
   existing file without `--force`. The link expires after a few minutes; run the command again for a new one.
+- **`task answer`** replies to a running task whose agent asked a person something: `view` shows `waiting:` and the
+  question with its number, and the agent carries on with the text as written. `--seq` names the question you answer,
+  so a reply never lands on a newer one; `--from-file FILE` (`-` for standard input) takes a multi-line answer. A
+  `permission` question (the agent asks to use a tool) takes only `Allow` or `Deny`, with its `--seq`, and only the
+  task's owner answers it. A task with no open question, or a stale `--seq`, is `no_open_question`.
 - **A task, schedule or credential that is somebody else's is a 404**, as everywhere in the farm: if `view` says "not
   found" for an id you were given, it belongs to another person or tenant (`dynfarm whoami` says who you are).
 
@@ -347,7 +353,7 @@ Every command takes `--help`. Those that read from the farm take `--json` (the f
 | `dynfarm whoami` | Your subject, tenant, scopes and the expiry of your token |
 | `dynfarm plugin list` | The plugins bundled in the agent image and the agents each brings |
 | `dynfarm callback-key` | The public key that verifies task callbacks |
-| `dynfarm task run`, `list`, `view`, `watch`, `logs`, `result`, `cancel` | Launch an agent task, follow it, read its logs and result, stop it |
+| `dynfarm task run`, `list`, `view`, `watch`, `logs`, `result`, `cancel`, `answer` | Launch an agent task, follow it, read its logs and result, stop it, answer its agent's question |
 | `dynfarm agent list`, `view`, `create`, `edit`, `delete` | See the agents you can launch and manage your own and your team's |
 | `dynfarm schedule list`, `view`, `create`, `runs`, `fire`, `pause`, `resume`, `delete` | Have the farm launch a task on a cron |
 | `dynfarm credential list`, `view`, `set`, `delete` | Hand a secret to the farm (never on the command line), see its metadata, delete it |

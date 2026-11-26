@@ -805,6 +805,96 @@ def test_cancel_without_the_cancel_scope_is_a_403(run_cli, fake_farm):
     assert result.exit_code == 1 and "insufficient_scope" in result.stderr
 
 
+# -- answer -------------------------------------------------------------------------------------------------------
+
+
+def test_view_shows_the_open_question_with_its_number(run_cli, fake_farm):
+    task_id = fake_farm.seed_task(ALICE, state="running")
+    fake_farm.ask(task_id, "Which database?\nstaging or prod")
+    out = run_cli(["task", "view", task_id]).stdout
+    assert "waiting:" in out and "question #1 (ask):\n  Which database?\n  staging or prod\n" in out
+
+
+def test_answer_sends_the_text_and_the_seq_and_the_task_stops_waiting(run_cli, fake_farm):
+    task_id = fake_farm.seed_task(ALICE, state="running")
+    seq = fake_farm.ask(task_id, "Which database?")
+    result = run_cli(["task", "answer", task_id, "Use staging.", "--seq", str(seq)])
+    assert result.exit_code == 0 and result.stdout == f"answered question #1 of task {task_id}\n"
+    assert [body_of(r) for r in sent(fake_farm, "answer_task")] == [{"answer": "Use staging.", "seq": 1}]
+    assert fake_farm.answers(task_id) == [{"seq": 1, "answer": "Use staging.", "by": fake_farm.tokens[ALICE].subject}]
+    assert fake_farm._tasks[task_id].data["waiting_input"] is False
+
+
+def test_answer_without_seq_sends_none_and_reads_a_multiline_answer_from_stdin(run_cli, fake_farm):
+    task_id = fake_farm.seed_task(ALICE, state="running")
+    fake_farm.ask(task_id, "Anything to add?")
+    result = run_cli(["task", "answer", task_id, "--from-file", "-"], input="line one\nline two\n")
+    assert result.exit_code == 0, result.output
+    assert [body_of(r) for r in sent(fake_farm, "answer_task")] == [{"answer": "line one\nline two"}]
+
+
+def test_answer_needs_text_or_a_file_but_not_both_and_sends_nothing_otherwise(run_cli, fake_farm, tmp_path):
+    task_id = fake_farm.seed_task(ALICE, state="running")
+    fake_farm.ask(task_id, "Which database?")
+    answer_file = tmp_path / "answer.txt"
+    answer_file.write_text("staging\n", encoding="utf-8")
+    for args in ([], ["staging", "--from-file", str(answer_file)], ["   "]):
+        result = run_cli(["task", "answer", task_id, *args])
+        assert result.exit_code == 2, args
+    assert sent(fake_farm, "answer_task") == []
+
+
+def test_answer_with_a_stale_seq_shows_the_farms_conflict_and_answers_nothing(run_cli, fake_farm):
+    task_id = fake_farm.seed_task(ALICE, state="running")
+    fake_farm.ask(task_id, "First?")
+    run_cli(["task", "answer", task_id, "yes", "--seq", "1"])
+    fake_farm.ask(task_id, "Second?")
+    result = run_cli(["task", "answer", task_id, "no", "--seq", "1"])
+    assert result.exit_code == 1 and "no_open_question" in result.stderr
+    assert [a["seq"] for a in fake_farm.answers(task_id)] == [1]
+
+
+def test_answer_to_a_task_that_is_not_waiting_is_a_conflict(run_cli, fake_farm):
+    task_id = fake_farm.seed_task(ALICE, state="running")
+    result = run_cli(["task", "answer", task_id, "hello"])
+    assert result.exit_code == 1 and "no_open_question" in result.stderr
+
+
+def test_a_permission_question_shows_its_options_and_takes_allow_with_its_seq(run_cli, fake_farm):
+    task_id = fake_farm.seed_task(ALICE, state="running")
+    seq = fake_farm.ask(task_id, "Bash: rm -rf build/", kind="permission")
+    assert "question #1 (permission, answer Allow or Deny):" in run_cli(["task", "view", task_id]).stdout
+    refused = run_cli(["task", "answer", task_id, "Maybe", "--seq", str(seq)])
+    assert refused.exit_code == 1 and "answer_invalid" in refused.stderr
+    assert run_cli(["task", "answer", task_id, "Allow", "--seq", str(seq)]).exit_code == 0
+    assert fake_farm.answers(task_id)[0]["answer"] == "Allow"
+
+
+def test_an_admin_cannot_answer_somebody_elses_permission_question(run_cli, fake_farm):
+    task_id = fake_farm.seed_task(ALICE, state="running")
+    seq = fake_farm.ask(task_id, "Bash: deploy", kind="permission")
+    result = run_cli(["task", "answer", task_id, "Allow", "--seq", str(seq)], token=ADMIN)
+    assert result.exit_code == 1 and "answer_owner_only" in result.stderr
+    assert fake_farm.answers(task_id) == []
+
+
+def test_answer_to_somebody_elses_task_is_a_404(run_cli, fake_farm):
+    task_id = fake_farm.seed_task(BOB, state="running")
+    fake_farm.ask(task_id, "Which database?")
+    result = run_cli(["task", "answer", task_id, "staging"])
+    assert result.exit_code == 1 and fake_farm.answers(task_id) == []
+
+
+def test_answer_last_answers_the_callers_newest_task_and_json_is_the_farms_answer(run_cli, fake_farm):
+    fake_farm.seed_task(ALICE, state="running")
+    fake_farm.tick()
+    newest = fake_farm.seed_task(ALICE, state="running")
+    fake_farm.ask(newest, "Which database?")
+    answer = printed(run_cli(["task", "answer", "last", "staging", "--json"]))
+    assert answer["seq"] == 1 and "answered_at" in answer
+    assert fake_farm.answers(newest)[0]["answer"] == "staging"
+
+
 # -- the token, the registry and the help -------------------------------------------------------------------------
 
 
@@ -819,6 +909,7 @@ def test_no_task_command_ever_prints_the_token(run_cli, fake_farm):
         ["task", "result", task_id],
         ["--debug", "task", "view", task_id],
         ["task", "cancel", "no-such-task", "--yes"],
+        ["task", "answer", "no-such-task", "hello"],
     ):
         assert ALICE not in run_cli(args).output, args
 
