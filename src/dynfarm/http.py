@@ -117,6 +117,8 @@ class FarmClient:
         self._sleep = sleep or time.sleep
         #: Status and headers (token masked) of the last reply, error or not, for `dynfarm api --include`.
         self.last_reply: Reply | None = None
+        #: Another tenant to read (`--tenant`, a key with `farm:platform:read`): sent as `?tenant=` on every GET.
+        self.tenant: str | None = None
         headers = {"User-Agent": _brand.user_agent(), "Accept": "application/json"}
         if self._token:
             headers["Authorization"] = f"Bearer {self._token}"
@@ -152,6 +154,8 @@ class FarmClient:
         method = method.upper()
         if not path.startswith("/"):
             raise ValueError("path must start with '/'")
+        if method == "GET" and self.tenant and not (params and "tenant" in params):
+            params = {**(params or {}), "tenant": self.tenant}
         url = self.host + API_PREFIX + path
         attempts = MAX_ATTEMPTS if method == "GET" else 1
         for attempt in range(1, attempts + 1):
@@ -330,6 +334,31 @@ def _query(params: dict[str, Any] | None) -> dict[str, str] | None:
 
 def _ms(started: float) -> int:
     return round((time.monotonic() - started) * 1000)
+
+
+def tenant_option(fn: Callable[..., Any] | None = None, *, every: bool = False) -> Any:
+    """Decorator for a read command, under `@needs_client`: adds `--tenant` and sets it on the client.
+
+    Only a key with `farm:platform:read` may read another tenant (the farm answers 403 otherwise), and only read: the
+    client sends `?tenant=` on GET requests and nowhere else. `every=True` is for the listings, which also take `*`
+    (every tenant the key can see, in one answer).
+    """
+
+    def decorate(callback: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(callback)
+        def wrapper(client: FarmClient, *args: Any, tenant: str | None = None, **kwargs: Any) -> Any:
+            client.tenant = tenant
+            return callback(client, *args, **kwargs)
+
+        return click.option(
+            "--tenant",
+            metavar="SLUG|*" if every else "SLUG",
+            help="Read another tenant, "
+            + ("or `*` for every one you can see " if every else "")
+            + "(only a key with farm:platform:read; read-only).",
+        )(wrapper)
+
+    return decorate(fn) if fn is not None else decorate
 
 
 def needs_client(fn: Callable[..., Any] | None = None, *, require_token: bool = True) -> Any:

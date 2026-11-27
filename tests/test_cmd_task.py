@@ -1119,3 +1119,37 @@ def test_view_shows_where_the_task_notifies_without_a_url_and_never_the_old_call
     assert "notify:" in result.stdout and "json (final: delivered), conversation (final, message)" in result.stdout
     assert "callback" not in result.stdout
     assert "callback" not in run_cli(["task", "run", "--help"]).stdout
+
+
+# -- list: the filters the API has --------------------------------------------------------------------------------
+
+
+def test_list_filters_by_conversation(run_cli, fake_farm):
+    mine = fake_farm.seed_task(ALICE, session_ref="sess-1")
+    fake_farm.seed_task(ALICE, session_ref="sess-2")
+    result = run_cli(["task", "list", "--session-ref", "sess-1"])
+    assert [row.split("\t")[0] for row in result.stdout.splitlines()] == [mine]
+    assert sent(fake_farm, "list_tasks")[0].query == {"session_ref": ["sess-1"]}
+
+
+def test_list_viewed_and_not_viewed_send_the_flag_as_the_farm_reads_it(run_cli, fake_farm):
+    seen, unseen = fake_farm.seed_task(ALICE), fake_farm.seed_task(ALICE)
+    fake_farm.set_task(seen, viewed=True)
+    fake_farm.set_task(unseen, viewed=False)
+    only_seen = run_cli(["task", "list", "--viewed"])
+    only_unseen = run_cli(["task", "list", "--not-viewed"])
+    assert [r.split("\t")[0] for r in only_seen.stdout.splitlines()] == [seen]
+    assert [r.split("\t")[0] for r in only_unseen.stdout.splitlines()] == [unseen]
+    assert [r.query for r in sent(fake_farm, "list_tasks")] == [{"viewed": ["true"]}, {"viewed": ["false"]}]
+    run_cli(["task", "list"])
+    assert "viewed" not in sent(fake_farm, "list_tasks")[-1].query
+
+
+def test_list_updated_since_follows_changes_oldest_change_first(run_cli, fake_farm):
+    first, second = fake_farm.seed_task(ALICE), fake_farm.seed_task(ALICE)
+    fake_farm.tick(60)
+    fake_farm.set_task(first, state="running")
+    result = run_cli(["task", "list", "--updated-since", "2026-10-20T12:00:30Z"])
+    assert [r.split("\t")[0] for r in result.stdout.splitlines()] == [first]
+    assert sent(fake_farm, "list_tasks")[0].query == {"updated_since": ["2026-10-20T12:00:30Z"]}
+    assert second not in result.stdout

@@ -147,6 +147,12 @@ dynfarm callback-key --pem     # only the PEM, ready for a file: dynfarm callbac
 dynfarm link-code teams        # a one-time code to link your Teams chat to you: write `/link <code>` to the bot
 ```
 
+Every command that only reads (`whoami`, `plugin list`, `callback-key`, `task list|view|logs|result|transcript`,
+`agent list|view`, `schedule list|view|runs`, `credential list|view`, `person list|view`) takes `--tenant SLUG` to read
+another tenant, which only a key with `farm:platform:read` may do (anyone else gets `insufficient_scope`). The listings
+also take `--tenant '*'`: every tenant the key can see, in one answer. It is read-only: no command that changes
+something has it.
+
 `whoami` is the first thing to run when a command answers "not found" or "not allowed": a task, schedule or
 credential belongs to its owner, and the farm answers 404 for what is someone else's.
 
@@ -192,6 +198,10 @@ dynfarm task transcript last                              # what the agent was a
   so a reply never lands on a newer one; `--from-file FILE` (`-` for standard input) takes a multi-line answer. A
   `permission` question (the agent asks to use a tool) takes only `Allow` or `Deny`, with its `--seq`, and only the
   task's owner answers it. A task with no open question, or a stale `--seq`, is `no_open_question`.
+- **`task list` filters**: `--state`, `--agent`, `--scope`, `--owner`, `--session-ref REF` (one conversation), `--since`
+  and `--until` (by creation), `--updated-since TIME` (what changed, oldest change first: the way to follow tasks
+  without asking for all of them again; the time needs a zone, `Z` or an offset) and `--viewed` / `--not-viewed` (your
+  own tasks you have, or have not, marked as seen: the unread marker Dynwork keeps).
 - **`task transcript`** prints the conversation of the task's agent: each message with its role, its text and one line
   per tool call (`!` marks a call that failed). The farm stores it when the task ends, so a running task has none yet.
   It comes in pages: `--limit N` (at most 200), `--cursor C` to continue one, `--all` to follow them to the end;

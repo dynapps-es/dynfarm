@@ -35,7 +35,7 @@ import click
 
 from dynfarm.commands import confirm
 from dynfarm.errors import ConfigError
-from dynfarm.http import FarmClient, needs_client, segment
+from dynfarm.http import FarmClient, needs_client, segment, tenant_option
 from dynfarm.inputs import read_json_object, read_text
 from dynfarm.output import Column, clean_text, emit, stdout_is_terminal
 from dynfarm.registry import operation
@@ -138,6 +138,7 @@ def build_agent_body(
 @click.option("--json", "json_flag", is_flag=True, help=JSON_HELP)
 @operation("list_agents")
 @needs_client
+@tenant_option(every=True)
 def list_(client: FarmClient, scope: str | None, owner: str | None, json_flag: bool) -> None:
     """List the agents you can launch: the farm's, your team's and your own."""
     params = {key: value for key, value in (("scope", scope), ("owner", owner)) if value is not None}
@@ -156,6 +157,7 @@ def list_(client: FarmClient, scope: str | None, owner: str | None, json_flag: b
 @click.option("--json", "json_flag", is_flag=True, help=JSON_HELP)
 @operation("get_agent")
 @needs_client
+@tenant_option
 def view(client: FarmClient, slug: str, json_flag: bool) -> None:
     """Show an agent: what it is for, its instructions, what it may touch and its limits."""
     found = client.request("GET", f"/agents/{segment(slug)}", operation_id="get_agent")
