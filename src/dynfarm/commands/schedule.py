@@ -48,7 +48,7 @@ import click
 
 from dynfarm.commands import confirm
 from dynfarm.errors import ConfigError
-from dynfarm.http import FarmClient, needs_client, segment
+from dynfarm.http import FarmClient, needs_client, segment, tenant_option
 from dynfarm.inputs import read_json_object
 from dynfarm.output import Column, clean_text, emit
 from dynfarm.registry import operation
@@ -109,6 +109,7 @@ def _path(schedule_id: str, suffix: str = "") -> str:
 @click.option("--json", "json_flag", is_flag=True, help=JSON_HELP)
 @operation("list_schedules")
 @needs_client
+@tenant_option(every=True)
 def list_(client: FarmClient, owner: str | None, json_flag: bool) -> None:
     """List schedules, newest first. A tenant admin sees the whole tenant's; --owner me narrows it to their own."""
     params = {"owner": owner} if owner is not None else None
@@ -178,6 +179,7 @@ def _print_schedule(row: dict[str, Any], *, json_flag: bool) -> None:
 @click.option("--json", "json_flag", is_flag=True, help=JSON_HELP)
 @operation("get_schedule")
 @needs_client
+@tenant_option
 def view(client: FarmClient, schedule_id: str, json_flag: bool) -> None:
     """Show a schedule: when it fires next, how its last firing went, and the task it launches."""
     _print_schedule(client.request("GET", _path(schedule_id), operation_id="get_schedule"), json_flag=json_flag)
@@ -433,6 +435,7 @@ def edit(
 @click.option("--json", "json_flag", is_flag=True, help=JSON_HELP)
 @operation("list_schedule_tasks")
 @needs_client
+@tenant_option
 def runs(client: FarmClient, schedule_id: str, limit: int | None, json_flag: bool) -> None:
     """List the tasks a schedule fired, newest first (`trigger` tells a cron firing from a `fire`)."""
     answer = client.request("GET", _path(schedule_id, "/tasks"), operation_id="list_schedule_tasks")

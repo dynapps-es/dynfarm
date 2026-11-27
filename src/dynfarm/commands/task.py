@@ -52,7 +52,7 @@ from dynfarm.commands import confirm
 from dynfarm.config import is_loopback
 from dynfarm.context import AppContext
 from dynfarm.errors import ConfigError, DynfarmError, FarmError
-from dynfarm.http import FarmClient, needs_client, segment
+from dynfarm.http import FarmClient, needs_client, segment, tenant_option
 from dynfarm.inputs import read_text
 from dynfarm.output import Column, clean_text, emit
 from dynfarm.registry import operation
@@ -263,35 +263,55 @@ def run(
 @click.option("--agent", "agent_id", metavar="AGENT", help="Only tasks of this agent.")
 @click.option("--scope", metavar="SLUG", help="Only tasks launched with this scope label.")
 @click.option("--owner", metavar="OWNER", help="`me`, or (tenant admins) a person's subject.")
+@click.option("--session-ref", metavar="REF", help="Only tasks of this conversation (a task's session_ref).")
+@click.option(
+    "--viewed/--not-viewed",
+    "viewed",
+    default=None,
+    help="Only your own tasks you have marked as seen, or have not (the farm's unread marker; Dynwork sets it).",
+)
 @click.option("--since", metavar="TIME", help="Only tasks created at or after this ISO 8601 time.")
 @click.option("--until", metavar="TIME", help="Only tasks created before this ISO 8601 time.")
+@click.option(
+    "--updated-since",
+    metavar="TIME",
+    help="Only tasks that changed (state, result, cancellation) at or after this ISO 8601 time with a time zone "
+    "(`Z` or an offset); oldest change first, which suits following changes.",
+)
 @click.option("--limit", type=click.IntRange(1, 100), help="Page size (the farm's default is 25, at most 100).")
 @click.option("--cursor", metavar="C", help="Start at this page: the next_cursor of the previous one.")
 @click.option("--all", "every_page", is_flag=True, help="Follow next_cursor and list every page.")
 @click.option("--json", "json_flag", is_flag=True, help=JSON_HELP)
 @operation("list_tasks")
 @needs_client
+@tenant_option(every=True)
 def list_(
     client: FarmClient,
     states: tuple[str, ...],
     agent_id: str | None,
     scope: str | None,
     owner: str | None,
+    session_ref: str | None,
+    viewed: bool | None,
     since: str | None,
     until: str | None,
+    updated_since: str | None,
     limit: int | None,
     cursor: str | None,
     every_page: bool,
     json_flag: bool,
 ) -> None:
-    """List tasks, newest first."""
+    """List tasks, newest first (oldest change first with --updated-since)."""
     params = {
         "state": ",".join(states) or None,
         "agent_id": agent_id,
         "scope": scope,
         "owner": owner,
+        "session_ref": session_ref,
+        "viewed": viewed,
         "since": since,
         "until": until,
+        "updated_since": updated_since,
         "limit": limit,
         "cursor": cursor,
     }
@@ -313,6 +333,7 @@ def list_(
 @click.option("--json", "json_flag", is_flag=True, help=JSON_HELP)
 @operation("get_task", "list_tasks")
 @needs_client
+@tenant_option
 def view(client: FarmClient, task_id: str, json_flag: bool) -> None:
     """Show a task: its state, who ran it and what it was asked."""
     task_id = resolve_task_id(client, task_id)
@@ -343,6 +364,7 @@ def watch(client: FarmClient, task_id: str, exit_status: bool, json_flag: bool) 
 @click.option("--json", "json_flag", is_flag=True, help=JSON_HELP)
 @operation("get_logs", "list_tasks")
 @needs_client
+@tenant_option
 def logs(client: FarmClient, task_id: str, tail: int | None, json_flag: bool) -> None:
     """Print the last lines of a task's log; once it has finished, the link to the complete log."""
     task_id = resolve_task_id(client, task_id)
@@ -387,6 +409,7 @@ def _print_transcript(answer: dict[str, Any]) -> None:
 @click.option("--json", "json_flag", is_flag=True, help=JSON_HELP)
 @operation("get_transcript", "list_tasks")
 @needs_client
+@tenant_option
 def transcript(
     client: FarmClient, task_id: str, limit: int | None, cursor: str | None, every_page: bool, json_flag: bool
 ) -> None:
@@ -432,6 +455,7 @@ def transcript(
 @click.option("--json", "json_flag", is_flag=True, help=JSON_HELP)
 @operation("get_result", "list_tasks")
 @needs_client
+@tenant_option
 def result(client: FarmClient, task_id: str, destination: str | None, force: bool, json_flag: bool) -> None:
     """Show what a finished task produced: its summary, usage and the link to the full result."""
     task_id = resolve_task_id(client, task_id)

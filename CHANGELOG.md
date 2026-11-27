@@ -28,6 +28,9 @@ First release: a command-line client for the Dynapps Agent Farm API.
 - **Conversation and chat**: `dynfarm task transcript ID` prints a finished task's conversation, page by page, and
   `dynfarm link-code CHANNEL` asks for the one-time code that links your chat account to you. `credential upload-link`
   issues a one-time link that takes a secret's value without it passing through the terminal.
+- **Reading across tenants and following tasks**: every read command takes `--tenant` (a key with
+  `farm:platform:read`; the listings also take `*`), and `task list` takes `--session-ref`, `--updated-since` and
+  `--viewed` / `--not-viewed`.
 - **People**: `dynfarm person list|view|offboard|readmit` for tenant admins. `offboard` is a dry run unless `--apply`,
   which asks for the person's subject (`--yes` in scripts); `--transfer-to` names who receives the team's agents and
   shared credentials. `list --tenant` reads other tenants with a `farm:platform:read` key. `credential list` shows

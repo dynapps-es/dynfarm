@@ -26,7 +26,7 @@ from typing import Any
 import click
 
 from dynfarm.errors import FarmError
-from dynfarm.http import FarmClient, needs_client, segment
+from dynfarm.http import FarmClient, needs_client, segment, tenant_option
 from dynfarm.output import Column, emit
 from dynfarm.registry import operation
 
@@ -52,6 +52,7 @@ _WHOAMI_FIELDS = (
 @click.option("--json", "json_flag", is_flag=True, help=JSON_HELP)
 @operation("whoami")
 @needs_client
+@tenant_option
 def whoami(client: FarmClient, json_flag: bool) -> None:
     """Show who the farm thinks you are: subject, tenant and scopes of your token."""
     me = client.request("GET", "/whoami", operation_id="whoami")
@@ -96,6 +97,7 @@ PLUGIN_COLUMNS = (
 @click.option("--json", "json_flag", is_flag=True, help=JSON_HELP)
 @operation("list_plugins")
 @needs_client
+@tenant_option(every=True)
 def list_plugins(client: FarmClient, json_flag: bool) -> None:
     """List the plugins of the agent image and the agents each one brings."""
     emit(client.request("GET", "/plugins", operation_id="list_plugins"), json_flag=json_flag, table=PLUGIN_COLUMNS)
@@ -108,6 +110,7 @@ def list_plugins(client: FarmClient, json_flag: bool) -> None:
 @click.option("--pem", is_flag=True, help="Print only the public key(s) as PEM, instead of the JSON.")
 @operation("notify_key")
 @needs_client
+@tenant_option
 def callback_key(client: FarmClient, pem: bool) -> None:
     """Print the public key that verifies task callbacks (JWK as JSON, or --pem)."""
     answer = client.request("GET", "/notify-key", operation_id="notify_key")

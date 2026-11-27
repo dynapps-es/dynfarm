@@ -48,7 +48,7 @@ import click
 
 from dynfarm import _brand, commands
 from dynfarm.errors import ConfigError, FarmError
-from dynfarm.http import FarmClient, needs_client, segment
+from dynfarm.http import FarmClient, needs_client, segment, tenant_option
 from dynfarm.output import Column, clean_text, emit
 from dynfarm.registry import operation
 
@@ -103,6 +103,7 @@ def credential() -> None:
 @click.option("--json", "json_flag", is_flag=True, help=JSON_HELP)
 @operation("list_credentials")
 @needs_client
+@tenant_option(every=True)
 def list_(client: FarmClient, scope: str | None, owner: str | None, json_flag: bool) -> None:
     """List your credentials (or your team's with --scope shared): name, type, owner, expiry. Never a value.
 
@@ -124,6 +125,7 @@ def list_(client: FarmClient, scope: str | None, owner: str | None, json_flag: b
 @click.option("--json", "json_flag", is_flag=True, help=JSON_HELP)
 @operation("get_credential")
 @needs_client
+@tenant_option
 def view(client: FarmClient, name: str, scope: str | None, owner: str | None, json_flag: bool) -> None:
     """Show what the farm keeps about a credential: its type, fingerprint, description, metadata and dates."""
     found = client.request(

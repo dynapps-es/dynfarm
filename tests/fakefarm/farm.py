@@ -383,6 +383,13 @@ class FakeFarm:
                     403, "insufficient_scope", f"this key lacks the scope {missing[0]}", details={"required": missing}
                 )
             query = self._read_query(route, recorded.query)
+            other = query.get("tenant")
+            if (
+                other not in (None, principal.tenant)
+                and route.operation_id not in ("list_people", "get_person")
+                and "farm:platform:read" not in principal.scopes
+            ):
+                raise ApiProblem(403, "insufficient_scope", "reading another tenant needs farm:platform:read")
             body = self._read_body(route, request)
             status, payload = self._handlers[route.operation_id](Call(principal, route, path_params, query, body))
         except ApiProblem as problem:
@@ -752,6 +759,8 @@ class FakeFarm:
         if owner:
             wanted = p.subject if owner == "me" else owner
             rows = [r for r in rows if r.data["owner"] == wanted]
+        if q.get("viewed") is not None:
+            rows = [r for r in rows if r.data["owner"] == p.subject and bool(r.data.get("viewed")) is q["viewed"]]
         for field_name in ("agent_id", "scope", "session_ref"):
             if q.get(field_name):
                 rows = [r for r in rows if r.data[field_name] == q[field_name]]
