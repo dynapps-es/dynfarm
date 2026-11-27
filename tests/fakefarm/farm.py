@@ -148,6 +148,7 @@ class TaskRow:
     result_expired: bool = False
     questions: int = 0
     answers: list[dict[str, Any]] = field(default_factory=list)
+    transcript: list[dict[str, Any]] = field(default_factory=list)
 
 
 class FakeFarm:
@@ -271,6 +272,27 @@ class FakeFarm:
         if fields.get("state") in ("running", *TERMINAL):
             row.data["started_at"] = row.data["started_at"] or self._ts()
         row.data["updated_at"] = self._ts()
+
+    def seed_transcript(self, task_id: str, messages: list[dict[str, Any]]) -> None:
+        """Give a task the conversation the farm stores when it ends (`seq` is filled in, from 1, when missing)."""
+        self._tasks[task_id].transcript = [
+            {
+                "seq": index,
+                "role": "assistant",
+                "at": self._ts(index),
+                "text": "",
+                "tool_uses": [],
+                "truncated": False,
+                **message,
+            }
+            | {
+                "tool_uses": [
+                    {"name": None, "input_summary": None, "result_summary": None, "is_error": False, **call}
+                    for call in message.get("tool_uses", [])
+                ]
+            }
+            for index, message in enumerate(messages, start=1)
+        ]
 
     def set_schedule(self, schedule_id: str, **fields: Any) -> None:
         """Change a schedule as the farm would (state `finished`, `last_fire_state`, `missed_runs`...)."""
@@ -675,6 +697,17 @@ class FakeFarm:
         }
         return 200, {"keys": [key]}
 
+    def _op_create_link_code(self, call: Call) -> tuple[int, Any]:
+        """As `POST /channels/{channel}/link-codes`: a six-digit code, and how to use it, in English."""
+        channel = call.path["channel"]
+        self._seq += 1
+        return 201, {
+            "channel": channel,
+            "code": f"{482100 + self._seq:06d}",
+            "expires_at": self._ts(600),
+            "instruction": f"Write /link {482100 + self._seq:06d} to the bot on {channel}.",
+        }
+
     def _op_list_plugins(self, call: Call) -> tuple[int, Any]:
         return 200, {"items": self._plugins}
 
@@ -770,6 +803,29 @@ class FakeFarm:
         row.answers.append({"seq": question["seq"], "answer": call.body["answer"], "by": call.principal.subject})
         self.set_task(row.data["task_id"], waiting_input=False, question=None)
         return 200, {"seq": question["seq"], "answered_at": self._ts()}
+
+    def _op_get_transcript(self, call: Call) -> tuple[int, Any]:
+        """As `GET /tasks/{id}/transcript`: empty until the task ends, then `limit` messages a page from `cursor`."""
+        row = self._task_for(call)
+        d, q = row.data, call.query
+        if row.result_expired or d["state"] == "expired":
+            raise ApiProblem(410, "transcript_expired", "the task's data passed its retention")
+        start, limit = int(q.get("cursor") or 0), q.get("limit") or 50
+        if limit > 200:
+            raise ApiProblem(422, "request_invalid", "limit is at most 200")
+        finished = d["state"] in TERMINAL
+        page = row.transcript[start : start + limit] if finished else []
+        end = start + len(page)
+        more = finished and end < len(row.transcript)
+        return 200, {
+            "task_id": d["task_id"],
+            "tenant": d["tenant"],
+            "scope": d["scope"],
+            "state": d["state"],
+            "messages": page,
+            "complete": finished and not more,
+            "next_cursor": str(end) if (more or not finished) else None,
+        }
 
     def _op_get_logs(self, call: Call) -> tuple[int, Any]:
         row = self._task_for(call)
@@ -1018,6 +1074,46 @@ class FakeFarm:
         self._schedules[schedule_id] = row
         return 201, self._schedule_out(row)
 
+    def _op_update_schedule(self, call: Call) -> tuple[int, Any]:
+        """As `PATCH /schedules/{id}`: each field sent replaces the stored one whole, the rest is untouched."""
+        row, body = self._schedule_for(call), call.body
+        if body.get("task") is None and "task" in body:
+            raise ApiProblem(422, "request_invalid", "task cannot be null")
+        if body.get("overlap") is None and "overlap" in body:
+            raise ApiProblem(422, "request_invalid", "overlap cannot be null")
+        if "task" in body:
+            task_problems = self.openapi.validate(
+                {"$ref": "#/components/schemas/TaskCreate"}, body["task"], ["body", "task"]
+            )
+            if task_problems:
+                detail = [x.as_detail() for x in task_problems]
+                self.violations.append(f"update_schedule: invalid task: {detail}")
+                raise ApiProblem(422, "request_invalid", "invalid request", details={"detail": detail})
+            self._check_task_body(call.principal, body["task"])
+        if "recurrence" in body:
+            if row["state"] == "finished":
+                raise ApiProblem(409, "schedule_finished", "a finished schedule cannot change its recurrence")
+            recurrence = body["recurrence"]
+            if recurrence is not None:
+                if not re.fullmatch(r"\S+( \S+){4}", recurrence["cron"].strip()):
+                    raise ApiProblem(422, "cron_invalid", "cron must have exactly 5 fields")
+                try:
+                    zoneinfo.ZoneInfo(recurrence["timezone"])
+                except (zoneinfo.ZoneInfoNotFoundError, ValueError):
+                    raise ApiProblem(422, "timezone_invalid", "unknown IANA timezone") from None
+                recurrence = {k: recurrence.get(k) for k in ("cron", "timezone", "starts_at", "ends_at", "max_runs")}
+            row["recurrence"] = recurrence
+            row["next_fire_at"] = self._ts(3600) if recurrence is not None else None
+        for name in ("task", "overlap"):
+            if name in body:
+                row[name] = body[name]
+        if "name" in body:
+            row["name"] = body["name"]
+        if "metadata" in body:
+            row["metadata"] = body["metadata"] or {}
+        row["updated_at"] = self._ts()
+        return 200, self._schedule_out(row)
+
     def _op_list_schedules(self, call: Call) -> tuple[int, Any]:
         p, q = call.principal, call.query
         rows = [r for r in self._schedules.values() if self._owns(p, r["tenant"], r["owner"])]
@@ -1131,6 +1227,28 @@ class FakeFarm:
         self._credentials[key] = row
         self.credential_values[key] = body["value"]
         return (200 if existing else 201), self._credential_out(row)
+
+    def _op_issue_credential_upload(self, call: Call) -> tuple[int, Any]:
+        """As `POST /credential-uploads`: a one-time link for a PERSONAL credential; nothing is stored yet."""
+        kind, name = call.body["type"], call.body.get("name")
+        if kind == "gateway_pat":
+            if name not in (None, "sp-gateway"):
+                raise ApiProblem(422, "credential_name_invalid", "a gateway_pat is always stored as sp-gateway")
+            name = "sp-gateway"
+        elif not name:
+            raise ApiProblem(422, "credential_name_required", "this type needs a name")
+        elif name == "sp-gateway":
+            raise ApiProblem(422, "credential_name_reserved", "sp-gateway is reserved")
+        elif "/" in name or ".." in name:
+            raise ApiProblem(422, "credentials_ref_out_of_tenant", "a credential name cannot contain '/' or '..'")
+        ticket = self._new_id("upload")
+        return 201, {
+            "upload_url": f"{self.base_url}/farm/api/v1/credential-uploads/{ticket}",
+            "method": "PUT",
+            "expires_at": self._ts(60),
+            "type": kind,
+            "name": name,
+        }
 
     def _op_list_credentials(self, call: Call) -> tuple[int, Any]:
         p, scope, owner = call.principal, call.query["scope"], call.query.get("owner")

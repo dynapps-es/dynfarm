@@ -179,11 +179,57 @@ def test_the_commands_declare_the_operations_they_call():
         ("whoami", "identity.whoami"),
         ("list_plugins", "identity.list_plugins"),
         ("notify_key", "identity.callback_key"),
+        ("create_link_code", "identity.link_code"),
     ):
         assert any(name.endswith(command) for name in declared[operation_id]), operation_id
 
 
 def test_the_root_help_lists_the_new_commands(run_cli):
     result = run_cli(["--help"])
-    for name in ("whoami", "plugin", "callback-key", "api"):
+    for name in ("whoami", "plugin", "callback-key", "link-code", "api"):
         assert name in result.stdout
+
+
+# -- link-code ----------------------------------------------------------------------------------------------------
+
+
+def test_link_code_prints_the_code_for_the_person_who_asked_and_how_to_use_it(run_cli, fake_farm):
+    result = run_cli(["link-code", "teams"])
+    shown = fields(result)
+    [request] = [r for r in fake_farm.requests if r.operation_id == "create_link_code"]
+    assert (request.method, request.path, request.body) == ("POST", "/farm/api/v1/channels/teams/link-codes", b"")
+    assert shown["channel"] == "teams" and shown["expires"] == "2026-10-20T12:10:00Z"
+    code = shown["code"]
+    assert len(code) == 6 and code.isdigit()
+    assert f"/link {code}" in result.stderr and code not in result.stderr.replace(f"/link {code}", "")
+
+
+def test_link_code_json_is_the_farms_answer_verbatim(run_cli):
+    shown = json.loads(run_cli(["link-code", "teams", "--json"]).stdout)
+    assert set(shown) == {"channel", "code", "expires_at", "instruction"}
+
+
+def test_link_code_asking_again_replaces_the_code(run_cli):
+    first, second = (fields(run_cli(["link-code", "teams"]))["code"] for _ in range(2))
+    assert first != second
+
+
+def test_link_code_escapes_the_channel_into_one_path_segment(run_cli, fake_farm):
+    run_cli(["link-code", "a/b"])
+    assert [r.path for r in fake_farm.requests if r.operation_id == "create_link_code"] == [
+        "/farm/api/v1/channels/a%2Fb/link-codes"
+    ]
+
+
+def test_link_code_needs_the_tasks_write_scope_and_a_token(run_cli):
+    denied = run_cli(["link-code", "teams"], token=READONLY)
+    assert denied.exit_code == 1 and "insufficient_scope" in denied.output
+    assert run_cli(["link-code", "teams"], token=None).exit_code == 4
+    assert run_cli(["link-code", "teams"], token=EXPIRED).exit_code == 4
+
+
+def test_link_code_under_debug_does_not_trace_the_code(run_cli):
+    result = run_cli(["--debug", "link-code", "teams"])
+    traced = [line for line in result.stderr.splitlines() if line.startswith("[debug]")]
+    assert traced and "create_link_code" in traced[0]
+    assert all(fields(result)["code"] not in line for line in traced)

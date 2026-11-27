@@ -647,6 +647,7 @@ def test_the_schedule_commands_declare_the_operations_they_call():
         ("pause_schedule", "schedule.pause"),
         ("resume_schedule", "schedule.resume"),
         ("delete_schedule", "schedule.delete"),
+        ("update_schedule", "schedule.edit"),
     ):
         assert any(name.endswith(command) for name in declared[operation_id]), (operation_id, command)
 
@@ -654,7 +655,7 @@ def test_the_schedule_commands_declare_the_operations_they_call():
 def test_the_root_help_and_schedule_help_list_the_commands(run_cli):
     assert "schedule" in run_cli(["--help"]).stdout
     listed = run_cli(["schedule", "--help"]).stdout
-    for name in ("list", "view", "create", "runs", "fire", "pause", "resume", "delete"):
+    for name in ("list", "view", "create", "edit", "runs", "fire", "pause", "resume", "delete"):
         assert f"  {name} " in listed
 
 
@@ -664,3 +665,165 @@ def test_create_offers_the_flags_of_task_run_except_the_correlation_id(run_cli):
     for flag in ("--prompt", "--prompt-file", "--input", "--input-file", "--scope", "--session-ref", "--body-file"):
         assert flag in task_help and flag in schedule_help, flag
     assert "--correlation-id" in task_help and "--correlation-id" not in schedule_help
+
+
+# -- edit ---------------------------------------------------------------------------------------------------------
+
+
+def edit_args(schedule_id: str, *extra: str) -> list[str]:
+    return ["schedule", "edit", schedule_id, *extra]
+
+
+def test_edit_sends_only_the_field_that_was_passed(run_cli, fake_farm):
+    schedule_id = make(fake_farm)
+    result = run_cli(edit_args(schedule_id, "--overlap", "allow", "--json"))
+    assert body_of(sent(fake_farm, "update_schedule")[0]) == {"overlap": "allow"}
+    shown = printed(result)
+    assert shown["overlap"] == "allow"
+    assert shown["recurrence"] == {
+        "cron": WEEKDAYS,
+        "timezone": MADRID,
+        "starts_at": None,
+        "ends_at": None,
+        "max_runs": None,
+    }
+    assert shown["task"] == {"agent_id": REVIEWER, "input": "Review my open MRs."}
+    request = sent(fake_farm, "update_schedule")[0]
+    assert (request.method, request.path) == ("PATCH", f"{API}/{schedule_id}")
+
+
+def test_edit_a_new_recurrence_needs_the_cron_and_the_timezone_and_replaces_the_old_one(run_cli, fake_farm):
+    schedule_id = make(fake_farm)
+    result = run_cli(edit_args(schedule_id, "--cron", "0 9 * * 1", "--timezone", "UTC", "--max-runs", "3", "--json"))
+    assert body_of(sent(fake_farm, "update_schedule")[0]) == {
+        "recurrence": {"cron": "0 9 * * 1", "timezone": "UTC", "max_runs": 3}
+    }
+    assert printed(result)["recurrence"]["max_runs"] == 3
+
+
+def test_edit_a_cron_without_a_timezone_is_refused_before_anything_is_sent(run_cli, fake_farm):
+    schedule_id = make(fake_farm)
+    result = run_cli(edit_args(schedule_id, "--cron", "0 9 * * 1"))
+    assert result.exit_code == 2 and "timezone" in result.output
+    assert not sent(fake_farm, "update_schedule")
+
+
+def test_edit_reads_the_new_recurrence_from_a_file_and_flags_override_it(run_cli, fake_farm, tmp_path):
+    schedule_id = make(fake_farm)
+    (tmp_path / "rec.json").write_text(
+        json.dumps({"cron": "0 7 * * *", "timezone": "UTC", "max_runs": 5}), encoding="utf-8"
+    )
+    result = run_cli(edit_args(schedule_id, "--recurrence-file", str(tmp_path / "rec.json"), "--timezone", MADRID))
+    assert result.exit_code == 0, result.output
+    assert body_of(sent(fake_farm, "update_schedule")[0]) == {
+        "recurrence": {"cron": "0 7 * * *", "timezone": MADRID, "max_runs": 5}
+    }
+
+
+def test_edit_a_new_task_is_sent_whole_through_the_flags_of_task_run(run_cli, fake_farm):
+    schedule_id = make(fake_farm)
+    result = run_cli(edit_args(schedule_id, "--prompt", "Summarise the TODOs.", "--scope", "docs", "--json"))
+    assert body_of(sent(fake_farm, "update_schedule")[0]) == {
+        "task": {"prompt": "Summarise the TODOs.", "scope": "docs"}
+    }
+    assert printed(result)["task"] == {"prompt": "Summarise the TODOs.", "scope": "docs"}
+    assert "stores the prompt" in result.stderr or "farm stores" in result.stderr
+
+
+def test_edit_a_task_flag_alone_cannot_make_a_task_and_nothing_is_sent(run_cli, fake_farm):
+    schedule_id = make(fake_farm)
+    result = run_cli(edit_args(schedule_id, "--scope", "docs"))
+    assert result.exit_code == 2 and "say what to run" in result.output
+    assert not sent(fake_farm, "update_schedule")
+
+
+def test_edit_the_agent_can_be_changed_with_the_positional_argument(run_cli, fake_farm):
+    schedule_id = make(fake_farm)
+    result = run_cli(edit_args(schedule_id, REVIEWER, "--input", "Oldest first."))
+    assert result.exit_code == 0, result.output
+    assert body_of(sent(fake_farm, "update_schedule")[0]) == {"task": {"agent_id": REVIEWER, "input": "Oldest first."}}
+
+
+def test_edit_sets_and_clears_the_name_and_the_metadata(run_cli, fake_farm, tmp_path):
+    schedule_id = make(fake_farm)
+    (tmp_path / "meta.json").write_text(json.dumps({"template": {"id": "t1"}}), encoding="utf-8")
+    run_cli(edit_args(schedule_id, "--name", "Morning review", "--metadata-file", str(tmp_path / "meta.json")))
+    run_cli(edit_args(schedule_id, "--clear-name", "--clear-metadata"))
+    first, second = (body_of(r) for r in sent(fake_farm, "update_schedule"))
+    assert first == {"name": "Morning review", "metadata": {"template": {"id": "t1"}}}
+    assert second == {"name": None, "metadata": None}
+
+
+def test_edit_no_recurrence_makes_a_schedule_that_only_runs_with_fire(run_cli, fake_farm):
+    schedule_id = make(fake_farm)
+    result = run_cli(edit_args(schedule_id, "--no-recurrence", "--json"))
+    assert body_of(sent(fake_farm, "update_schedule")[0]) == {"recurrence": None}
+    assert printed(result)["recurrence"] is None and printed(result)["next_fire_at"] is None
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ("--name", "x", "--clear-name"),
+        ("--no-recurrence", "--cron", "0 9 * * *"),
+        ("--metadata-file", "-", "--clear-metadata"),
+    ],
+)
+def test_edit_refuses_options_that_contradict_each_other(run_cli, fake_farm, extra):
+    schedule_id = make(fake_farm)
+    result = run_cli(edit_args(schedule_id, *extra), input="{}")
+    assert result.exit_code == 2
+    assert not sent(fake_farm, "update_schedule")
+
+
+def test_edit_with_nothing_to_change_is_refused_and_sends_nothing(run_cli, fake_farm):
+    schedule_id = make(fake_farm)
+    result = run_cli(edit_args(schedule_id))
+    assert result.exit_code == 2 and "nothing to change" in result.output
+    assert not sent(fake_farm, "update_schedule")
+
+
+def test_edit_only_one_input_reads_standard_input(run_cli, fake_farm):
+    schedule_id = make(fake_farm)
+    result = run_cli(edit_args(schedule_id, "--body-file", "-", "--recurrence-file", "-"), input="{}")
+    assert result.exit_code == 2 and "standard input" in result.output
+    assert not sent(fake_farm, "update_schedule")
+
+
+def test_edit_shows_the_farms_refusals_with_their_codes(run_cli, fake_farm):
+    schedule_id = make(fake_farm)
+    bad_cron = run_cli(edit_args(schedule_id, "--cron", "* *", "--timezone", "UTC"))
+    assert bad_cron.exit_code == 1 and "cron_invalid" in bad_cron.output
+    bad_zone = run_cli(edit_args(schedule_id, "--cron", "0 9 * * *", "--timezone", "Mars/Base"))
+    assert "timezone_invalid" in bad_zone.output
+    fake_farm.set_schedule(schedule_id, state="finished")
+    finished = run_cli(edit_args(schedule_id, "--no-recurrence"))
+    assert finished.exit_code == 1 and "schedule_finished" in finished.output
+    # a finished schedule can still be renamed: only its recurrence is frozen
+    assert run_cli(edit_args(schedule_id, "--name", "Done")).exit_code == 0
+
+
+def test_edit_of_somebody_elses_schedule_is_not_found(run_cli, fake_farm):
+    schedule_id = make(fake_farm, ALICE)
+    result = run_cli(edit_args(schedule_id, "--overlap", "allow"), token=BOB)
+    assert result.exit_code == 1 and "not_found" in result.output
+
+
+def test_edit_is_never_repeated_by_itself_after_a_retryable_error(run_cli, fake_farm, sleeps):
+    schedule_id = make(fake_farm)
+    fake_farm.fail_next("update_schedule")
+    result = run_cli(edit_args(schedule_id, "--overlap", "allow"))
+    assert result.exit_code == 1
+    assert len(sent(fake_farm, "update_schedule")) == 1 and not sleeps
+
+
+def test_edit_a_paused_schedule_stays_paused(run_cli, fake_farm):
+    schedule_id = make(fake_farm)
+    run_cli(["schedule", "pause", schedule_id])
+    shown = printed(run_cli(edit_args(schedule_id, "--overlap", "allow", "--json")))
+    assert shown["state"] == "paused"
+
+
+def test_edit_help_says_a_field_replaces_the_stored_one_whole(run_cli):
+    text = run_cli(["schedule", "edit", "--help"]).stdout
+    assert "replaces" in text and "--no-recurrence" in text

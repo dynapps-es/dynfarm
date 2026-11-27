@@ -43,14 +43,17 @@ PINNED = Path(__file__).parent / "fixtures" / "openapi.json"
 #: Read at import on purpose: see the module docstring.
 SPEC_PATH = os.environ.get("DYNFARM_PARITY_OPENAPI")
 
-#: operationId -> why this API operation deliberately has no command. Empty: every operation has one.
+#: operationId -> why this API operation deliberately has no command.
 EXCLUDED: dict[str, str] = {
-    "create_link_code": "no command yet",
-    "get_transcript": "no command yet",
-    "issue_credential_upload": "no command yet",
-    "mark_task_viewed": "no command yet",
-    "update_schedule": "no command yet",
-    "upload_credential_value": "no command yet",
+    "mark_task_viewed": (
+        "Dynwork's unread marker: `viewed` is kept per person and shared by every client, and a terminal has no unread "
+        "list to clear, so a command would set a flag nothing in the CLI reads"
+    ),
+    "upload_credential_value": (
+        "the second half of `credential upload-link`: the value is sent to the link itself, with no key, by whatever "
+        "holds the secret (Dynwork, a script); `credential set` already sends a value with the person's own token, "
+        "through the hidden prompt, standard input, a file or a variable"
+    ),
 }
 
 #: (command path, parameter name) of every `click.Choice` that mirrors an API enum -> (schema, property) it must equal.
@@ -60,7 +63,9 @@ CHOICES_FROM_THE_API: dict[tuple[tuple[str, ...], str], tuple[str, str]] = {
     (("agent", "delete"), "scope"): ("AgentCreate", "scope"),
     (("agent", "list"), "scope"): ("AgentOut", "scope"),
     (("schedule", "create"), "overlap"): ("ScheduleCreate", "overlap"),
+    (("schedule", "edit"), "overlap"): ("ScheduleUpdate", "overlap"),
     (("credential", "set"), "type_"): ("CredentialCreate", "type"),
+    (("credential", "upload-link"), "type_"): ("CredentialUploadCreate", "type"),
     (("credential", "set"), "scope"): ("CredentialCreate", "scope"),
     (("credential", "list"), "scope"): ("CredentialCreate", "scope"),
     (("credential", "view"), "scope"): ("CredentialCreate", "scope"),
@@ -335,6 +340,16 @@ def test_every_column_the_tables_read_exists_in_the_response_schemas():
 def json_cases(fake_farm, run_cli) -> list[tuple[list[str], str]]:
     """Arrange one of each resource through the CLI; name each command and the operation whose answer it prints."""
     task_id = fake_farm.seed_task(ALICE, state="succeeded", logs=["one", "two"])
+    fake_farm.seed_transcript(
+        task_id,
+        [
+            {"role": "user", "text": "Review MR 7."},
+            {
+                "text": "Done.",
+                "tool_uses": [{"name": "Read", "input_summary": "{}", "result_summary": "ok", "is_error": False}],
+            },
+        ],
+    )
     created = json.loads(
         run_cli(["schedule", "create", "--prompt", "hi", "--cron", "0 8 * * *", "--timezone", "UTC", "--json"]).stdout
     )
@@ -359,6 +374,10 @@ def json_cases(fake_farm, run_cli) -> list[tuple[list[str], str]]:
         (["schedule", "pause", schedule_id], "pause_schedule"),
         (["credential", "list"], "list_credentials"),
         (["credential", "view", "parity-key"], "get_credential"),
+        (["credential", "upload-link", "parity-upload", "--type", "generic"], "issue_credential_upload"),
+        (["link-code", "teams"], "create_link_code"),
+        (["task", "transcript", task_id], "get_transcript"),
+        (["schedule", "edit", schedule_id, "--overlap", "allow"], "update_schedule"),
         (["person", "list"], "list_people"),
         (["person", "view", person_id], "get_person"),
     ]
@@ -378,7 +397,7 @@ def test_every_json_output_has_only_keys_the_response_schema_declares(fake_farm,
             ]
         )
         checked += 1
-    assert checked == 18
+    assert checked == 22
 
 
 # -- proof that the checks can fail (a check that cannot is not a gate) ----------------------------------------------

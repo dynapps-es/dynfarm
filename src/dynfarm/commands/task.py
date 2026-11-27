@@ -3,6 +3,7 @@
     task run [AGENT]   POST /tasks            task list    GET /tasks            task logs    GET /tasks/{id}/logs
     task view ID       GET  /tasks/{id}       task watch   GET /tasks/{id}?wait= task result  GET /tasks/{id}/result
     task cancel ID     DELETE /tasks/{id}      task answer  POST /tasks/{id}/answer
+    task transcript ID GET  /tasks/{id}/transcript
 
 Where an ID is expected, `last` is the newest task *you* launched (`GET /tasks?owner=me&limit=1`): `owner=me` matters
 to a tenant admin, who otherwise sees everyone's and would get somebody else's task.
@@ -26,6 +27,11 @@ Choices worth knowing:
   the question with its number). The text goes to the agent as written. `--seq` names the question being answered,
   so an answer never lands on a newer one; a `permission` question (the agent asks to use a tool) needs it and takes
   only `Allow` or `Deny`. The farm decides who may answer and says why when it refuses.
+- **`transcript` prints the conversation of the task's agent**: what it was asked, what it answered and each tool it
+  called with a summary of the call (`!` marks a call that failed). The farm stores it when the task ends, so a task
+  that is still running has none yet, and one that never started never will. It comes in pages (`--limit`, at most
+  200; `--cursor` continues one, `--all` follows them to the end) and holds what the agent read and wrote, so treat it
+  as sensitive. Texts and summaries are cut by the farm (`[cut]` marks a message where that happened).
 - Everything from the farm that a person or an agent wrote (prompt, input, log lines, the summary) is cleaned of
   control characters before it reaches the terminal.
 """
@@ -124,9 +130,20 @@ def _state_line(task_data: dict[str, Any]) -> str:
     return state
 
 
+def _notify_line(targets: Any) -> str | None:
+    """Where the task tells people about itself: `json (final: delivered), teams (final, message)`. Never a URL."""
+    parts = []
+    for target in targets or []:
+        label = target.get("format") or target.get("kind") or "?"
+        events = ", ".join(target.get("events") or [])
+        final = (target.get("final") or {}).get("status")
+        detail = f"final: {final}" if final and events == "final" else events
+        parts.append(f"{label} ({detail})" if detail else label)
+    return ", ".join(parts) or None
+
+
 def _fields(task_data: dict[str, Any]) -> list[tuple[str, Any]]:
     usage = task_data.get("usage") or {}
-    callback = task_data.get("callback") or {}
     workspace = task_data.get("workspace") or {}
     return [
         ("id", task_data.get("task_id")),
@@ -141,7 +158,7 @@ def _fields(task_data: dict[str, Any]) -> list[tuple[str, Any]]:
         ("correlation id", task_data.get("correlation_id")),
         ("session", task_data.get("session_ref")),
         ("repository", workspace.get("repo")),
-        ("callback", callback.get("status")),
+        ("notify", _notify_line(task_data.get("notify"))),
         ("waiting", "for an answer (dynfarm task answer)" if task_data.get("waiting_input") else None),
     ]
 
@@ -340,6 +357,67 @@ def logs(client: FarmClient, task_id: str, tail: int | None, json_flag: bool) ->
     full = answer.get("full_logs")
     if full:
         _note(f"complete log: {clean_text(full['url'])} (valid until {full['expires_at']})")
+
+
+# -- transcript ---------------------------------------------------------------------------------------------------
+
+
+def _print_transcript(answer: dict[str, Any]) -> None:
+    """The conversation as text: a header line per message, its text indented, one line per tool call."""
+    for message in answer["messages"]:
+        header = f"#{message.get('seq')} {message.get('role')}"
+        if message.get("at"):
+            header += f" ({message['at']})"
+        click.echo(clean_text(header + (" [cut]" if message.get("truncated") else "")))
+        for line in clean_text(str(message.get("text") or ""), multiline=True).splitlines():
+            click.echo(f"  {line}")
+        for call in message.get("tool_uses") or []:
+            mark = "!" if call.get("is_error") else "-"
+            click.echo(clean_text(f"  {mark} {call.get('name') or '(tool)'}: {call.get('input_summary') or ''}"))
+            if call.get("result_summary"):
+                for line in clean_text(str(call["result_summary"]), multiline=True).splitlines()[:1]:
+                    click.echo(f"      -> {line}")
+
+
+@task.command()
+@_task_arg
+@click.option("--limit", type=click.IntRange(1, 200), help="Messages per page (the farm's default is 50, at most 200).")
+@click.option("--cursor", metavar="C", help="Start at this page: the next_cursor of the previous one.")
+@click.option("--all", "every_page", is_flag=True, help="Follow next_cursor and print the whole conversation.")
+@click.option("--json", "json_flag", is_flag=True, help=JSON_HELP)
+@operation("get_transcript", "list_tasks")
+@needs_client
+def transcript(
+    client: FarmClient, task_id: str, limit: int | None, cursor: str | None, every_page: bool, json_flag: bool
+) -> None:
+    """Show the conversation of a finished task's agent: what it was asked, answered and which tools it called.
+
+    The farm stores it when the task ends; before that there is nothing to show. It holds what the agent read and
+    wrote, so treat it as sensitive.
+    """
+    task_id = resolve_task_id(client, task_id)
+    params = {key: value for key, value in (("limit", limit), ("cursor", cursor)) if value is not None}
+    answer = client.request("GET", _path(task_id, "/transcript"), params=params, operation_id="get_transcript")
+    if every_page:
+        messages = list(answer["messages"])
+        seen = {cursor} if cursor else set()
+        while not answer["complete"] and answer["messages"] and answer.get("next_cursor"):
+            following = answer["next_cursor"]
+            if following in seen:
+                raise FarmError(200, "pagination_loop", f"the farm sent the cursor {following!r} twice; stopping")
+            seen.add(following)
+            params["cursor"] = following
+            answer = client.request("GET", _path(task_id, "/transcript"), params=params, operation_id="get_transcript")
+            messages.extend(answer["messages"])
+        answer = {**answer, "messages": messages}
+    if json_flag:
+        emit(answer, json_flag=True)
+        return
+    _print_transcript(answer)
+    if not answer["messages"]:
+        _note(f"no conversation yet (the task is {answer['state']}): the farm stores it when the task ends")
+    elif not every_page and not answer["complete"] and answer.get("next_cursor"):
+        _note(f"more messages: add --cursor {answer['next_cursor']} (or --all)")
 
 
 # -- result -------------------------------------------------------------------------------------------------------

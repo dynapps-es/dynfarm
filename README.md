@@ -144,6 +144,7 @@ dynfarm whoami                 # subject, tenant, scopes and expiry of your toke
 dynfarm plugin list            # the plugins bundled in the agent image and the agents each brings (--json)
 dynfarm callback-key           # the public key that signs the farm's notifications, as JSON
 dynfarm callback-key --pem     # only the PEM, ready for a file: dynfarm callback-key --pem > farm-callback.pem
+dynfarm link-code teams        # a one-time code to link your Teams chat to you: write `/link <code>` to the bot
 ```
 
 `whoami` is the first thing to run when a command answers "not found" or "not allowed": a task, schedule or
@@ -165,12 +166,13 @@ dynfarm task logs last --tail 50
 dynfarm task result last --download result.json           # summary and link; --download saves the file
 dynfarm task cancel last                                  # asks first; --yes in scripts
 dynfarm task answer last "Use the staging database." --seq 1   # reply to the question the agent is waiting on
+dynfarm task transcript last                              # what the agent was asked, answered and which tools it called
 ```
 
 - **What `run` sends.** An `AGENT` (an `agent_id`; it needs an `--input`) or a `--prompt`, never both, plus `--scope`
   (your own label, a lowercase slug), `--session-ref` (continue a finished task's conversation) and
   `--correlation-id` (an idempotency key: repeating it returns the existing task instead of launching another).
-  Anything else a task can carry — `workspace`, `marketplace`, `mcp_servers`, `limits`, `callback`, `image`, `services`
+  Anything else a task can carry — `workspace`, `marketplace`, `mcp_servers`, `limits`, `notify`, `image`, `services`
   — goes in `--body-file FILE` (`-` for standard input), a complete task as JSON; the flags override its fields.
   `--prompt-file` and `--input-file` read long or multi-line text from a file or from standard input. Contradictions
   (an agent and a prompt, text given twice) are refused with exit 2 before anything is sent.
@@ -190,6 +192,10 @@ dynfarm task answer last "Use the staging database." --seq 1   # reply to the qu
   so a reply never lands on a newer one; `--from-file FILE` (`-` for standard input) takes a multi-line answer. A
   `permission` question (the agent asks to use a tool) takes only `Allow` or `Deny`, with its `--seq`, and only the
   task's owner answers it. A task with no open question, or a stale `--seq`, is `no_open_question`.
+- **`task transcript`** prints the conversation of the task's agent: each message with its role, its text and one line
+  per tool call (`!` marks a call that failed). The farm stores it when the task ends, so a running task has none yet.
+  It comes in pages: `--limit N` (at most 200), `--cursor C` to continue one, `--all` to follow them to the end;
+  `--json` is the farm's answer. It holds what the agent read and wrote, so treat it as sensitive.
 - **A task, schedule or credential that is somebody else's is a 404**, as everywhere in the farm: if `view` says "not
   found" for an id you were given, it belongs to another person or tenant (`dynfarm whoami` says who you are).
 
@@ -241,6 +247,7 @@ dynfarm schedule view SCHEDULE_ID           # when it fires next, how the last f
 dynfarm schedule runs SCHEDULE_ID           # the tasks it fired, newest first; --limit N for the newest N
 dynfarm schedule fire SCHEDULE_ID           # launch its task now, once
 dynfarm schedule pause SCHEDULE_ID          # and `resume`
+dynfarm schedule edit SCHEDULE_ID --overlap allow     # change only what you pass; see below
 dynfarm schedule delete SCHEDULE_ID         # asks first; --yes in scripts
 ```
 
@@ -259,6 +266,12 @@ dynfarm schedule delete SCHEDULE_ID         # asks first; --yes in scripts
 - **`fire` runs the task now** and prints it (`trigger: manual`); it does not move the next cron firing or count
   against `--max-runs`. Unlike a cron firing, a refusal is an error with a code: `schedule_not_active` (paused or
   finished) or `schedule_overlap`. Follow the task it printed with `dynfarm task watch ID`.
+- **`edit`** sends only the fields you pass, and each one replaces the stored field whole: a new task (an `AGENT` or
+  `--prompt` with the flags of `create`, or `--body-file`) is not merged with the old one, a new recurrence needs
+  `--cron` and `--timezone` again, `--metadata-file` replaces the metadata object. `--name`, `--clear-name`,
+  `--clear-metadata`, `--overlap` and `--no-recurrence` (it then only runs with `fire`) are the rest. The id, the
+  counters, the state and the tasks already fired are kept; a finished schedule cannot change its recurrence
+  (`schedule_finished`). An edit is never repeated by itself after a network error.
 - **`pause` and `resume`** do not replay what was missed meanwhile (`missed runs` in `view` counts it). A finished
   schedule answers `schedule_finished` to both. `create`, `fire`, `pause`, `resume` and `delete` are never repeated by
   themselves after a network error.
@@ -280,6 +293,7 @@ dynfarm credential set git-readonly --type git_token                          # 
 dynfarm credential set git-readonly --type git_token --value-env GITLAB_TOKEN # from a variable you already have
 dynfarm credential set web-api --type generic --value-file ./web-api.key      # from a file
 pass show gitlab/readonly | dynfarm credential set git-readonly --type git_token   # from standard input
+dynfarm credential upload-link git-readonly --type git_token   # a one-time link that takes the value, see below
 dynfarm credential list                    # name, type, scope, owner, fingerprint, expiry; --scope shared, --json
 dynfarm credential view git-readonly       # its metadata: type, fingerprint, description, metadata, dates
 dynfarm credential delete git-readonly     # asks first; --yes in scripts
@@ -305,6 +319,12 @@ dynfarm credential delete git-readonly --owner ana@example.com   # tenant admins
   checked before the secret is asked for. An `mcp_url` must be a whole `https` URL (`credential_value_invalid`
   otherwise; the farm never echoes the rejected value). `--description`, `--metadata KEY=VALUE` (repeatable) and
   `--expires-at` are **not secret**: the farm shows them to whoever can list the credential.
+- **`upload-link`** is for a secret that should not pass through this terminal at all: it prints a link that takes the
+  value in one HTTP `PUT` with the JSON body `{"value": "..."}` and no `Authorization`, so it can go straight from
+  where it lives to the farm. The link is a secret until it is used: it works once, for 60 seconds, for your own
+  personal credential (`--type` is `gateway_pat`, `git_token`, `generic`, `mcp_token` or `mcp_url`; a `gateway_pat`
+  is always stored as `sp-gateway` and takes no name), and asking again replaces it. Nothing is stored until the `PUT`
+  arrives. The link is printed on standard output for you and nowhere else; `--debug` does not show it.
 - **Rotation**: `set` with a name you already have replaces the secret and says `Rotated`; a new name says `Saved`.
   Both print the fingerprint, so you can check which secret is stored without seeing it. A rotation keeps the
   description unless you give a new one (`--description ""` clears it).
@@ -380,11 +400,12 @@ Every command takes `--help`. Those that read from the farm take `--json` (the f
 | `dynfarm auth login`, `status`, `token`, `logout`, `switch` | Sign in to farms, see where each token is kept, print one for a script, forget one, change the default farm |
 | `dynfarm whoami` | Your subject, tenant, scopes and the expiry of your token |
 | `dynfarm plugin list` | The plugins bundled in the agent image and the agents each brings |
-| `dynfarm callback-key` | The public key that verifies task callbacks |
-| `dynfarm task run`, `list`, `view`, `watch`, `logs`, `result`, `cancel`, `answer` | Launch an agent task, follow it, read its logs and result, stop it, answer its agent's question |
+| `dynfarm callback-key` | The public key that verifies the farm's task notifications |
+| `dynfarm link-code CHANNEL` | A one-time code to link your chat account (`teams`) to you |
+| `dynfarm task run`, `list`, `view`, `watch`, `logs`, `result`, `cancel`, `answer`, `transcript` | Launch an agent task, follow it, read its logs, result and conversation, stop it, answer its agent's question |
 | `dynfarm agent list`, `view`, `create`, `edit`, `delete` | See the agents you can launch and manage your own and your team's |
-| `dynfarm schedule list`, `view`, `create`, `runs`, `fire`, `pause`, `resume`, `delete` | Have the farm launch a task on a cron |
-| `dynfarm credential list`, `view`, `set`, `delete` | Hand a secret to the farm (never on the command line), see its metadata, delete it |
+| `dynfarm schedule list`, `view`, `create`, `runs`, `fire`, `pause`, `resume`, `edit`, `delete` | Have the farm launch a task on a cron |
+| `dynfarm credential list`, `view`, `set`, `upload-link`, `delete` | Hand a secret to the farm (never on the command line), get a one-time link that takes it, see its metadata, delete it |
 | `dynfarm person list`, `view`, `offboard`, `readmit` | Tenant admins: find a person by `person_id`, offboard them in one step (a dry run unless `--apply`), readmit them |
 | `dynfarm api` | Any other call to the farm's API, like `gh api` |
 | `dynfarm completion bash`, `zsh`, `fish` | The shell's tab-completion script |

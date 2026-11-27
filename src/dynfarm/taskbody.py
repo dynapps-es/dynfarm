@@ -15,7 +15,7 @@ What the flags are, and why they are only the common part of the body:
 - `AGENT` (the `agent_id`), `--prompt`/`--prompt-file`, `--input`/`--input-file`, `--scope` (the person's own label,
   a lowercase slug), `--correlation-id` (the idempotency key) and `--session-ref` (resume a conversation) cover what
   most tasks need.
-- Everything else `TaskCreate` knows (`workspace`, `marketplace`, `mcp_servers`, `limits`, `callback`, `image`,
+- Everything else `TaskCreate` knows (`workspace`, `marketplace`, `mcp_servers`, `limits`, `notify`, `image`,
   `services`, ...) is nested or rare, and a flag per field would be a second copy of the OpenAPI that drifts. It goes
   in `--body-file FILE` (`-` for standard input): a complete `TaskCreate` JSON object. A flag overrides the same field
   of the file.
@@ -104,7 +104,7 @@ def task_body_options(fn: F | None = None, *, correlation_id: bool = True) -> An
                 "--body-file",
                 metavar="FILE",
                 help="A complete task as JSON ('-' for standard input), for what has no flag (workspace, "
-                "marketplace, mcp_servers, limits, callback, image...). The flags override its fields.",
+                "marketplace, mcp_servers, limits, notify, image...). The flags override its fields.",
             ),
         ]
         if correlation_id:

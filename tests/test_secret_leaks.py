@@ -313,3 +313,19 @@ def test_a_shared_credential_written_by_an_admin_is_contained_too(child, fake_fa
     assert run.stdout.startswith("Saved shared credential web-api (generic, fingerprint sha256:")
     assert stored(fake_farm, "web-api", scope="shared") == secret
     assert_contained(child, secret)
+
+
+# -- the one-time upload link -------------------------------------------------------------------------------------
+
+
+def test_an_upload_link_is_printed_once_for_the_person_and_reaches_no_log_and_no_file(child):
+    run = child.run("--debug", "credential", "upload-link", "git-readonly", "--type", "git_token")
+    assert run.code == 0, run.output
+    [link] = [line.split(": ", 1)[1].strip() for line in run.stdout.splitlines() if line.startswith("url:")]
+    ticket = link.rsplit("/", 1)[1]
+    assert ticket and ticket not in run.stderr and ticket not in " ".join(run.argv)
+    for directory in (child.config_dir, child.home):
+        for path in directory.rglob("*"):
+            if path.is_file():
+                assert ticket.encode() not in path.read_bytes(), f"the link was written to {path}"
+    assert not [r for r in child.farm.requests if ticket.encode() in r.target.encode() or ticket.encode() in r.body]
