@@ -2,6 +2,7 @@
 
     credential list         GET    /credentials           credential set NAME     POST   /credentials
     credential view NAME    GET    /credentials/{name}    credential delete NAME  DELETE /credentials/{name}
+    credential upload-link [NAME]  POST /credential-uploads
 
 The farm's credential channel is write-only (`farm-api.md` §8): a secret goes in once, by name, and no endpoint ever
 gives it back, only its metadata and a `fingerprint` (a prefix of its SHA-256) to tell which one is stored. Tasks and
@@ -22,6 +23,13 @@ What `credential set` guarantees about the secret, and why:
   of only whitespace, is refused (exit 2) before anything is sent.
 - **The type is checked here** against the farm's list (`CREDENTIAL_TYPES`, the enum of `CredentialCreate` in the
   OpenAPI) before the value is even read, so a typo does not cost the person typing the secret again.
+
+`credential upload-link` is the other way in, for a client that must not carry the secret at all: it asks the farm for
+a link that takes the value in one `PUT` (`{"value": ...}`, no `Authorization`), so the secret can go from where it
+lives (a phone, a vault's web page, another machine) straight to the farm. The link is a secret until it is used: it
+works once, for 60 seconds, for your own personal credential only, and asking again replaces it. It is printed on
+standard output for the person who asked and nowhere else, and `--debug` never shows it. Nothing is stored until the
+`PUT` arrives, and the command itself never sees a value.
 
 Writing a name you already have **rotates** it (the farm answers `200` and `set` says "Rotated"); a new name answers
 `201` ("Saved"). `--scope shared` writes a credential of the whole team, which only a tenant admin may do
@@ -346,6 +354,57 @@ def _masked(exc: FarmError, value: str) -> FarmError:
         details=mask(exc.details),
         retry_after=exc.retry_after,
         correlation_id=exc.correlation_id,
+    )
+
+
+# -- upload-link --------------------------------------------------------------------------------------------------
+
+#: The `type` enum of `CredentialUploadCreate`; a test keeps it equal to the pinned document.
+UPLOAD_TYPES = ("gateway_pat", "git_token", "generic", "mcp_token", "mcp_url")
+
+
+@credential.command("upload-link")
+@click.argument("name", required=False)
+@click.option(
+    "--type", "type_", required=True, type=click.Choice(UPLOAD_TYPES), help="What kind of secret the link takes."
+)
+@click.option("--json", "json_flag", is_flag=True, help="Print the farm's answer as JSON (it holds the link).")
+@operation("issue_credential_upload")
+@needs_client
+def upload_link(client: FarmClient, name: str | None, type_: str, json_flag: bool) -> None:
+    """Get a one-time link that takes a secret's value, so it never passes through this terminal.
+
+    The value goes to the link in one HTTP PUT with the JSON body {"value": "..."} and no Authorization, within 60
+    seconds. It is stored as your own personal credential NAME (a gateway_pat is always stored as sp-gateway, so it
+    takes no NAME). Treat the link as a secret until it is used; asking again replaces it.
+
+    \b
+    dynfarm credential upload-link git-readonly --type git_token
+    dynfarm credential upload-link --type gateway_pat
+    """
+    if name is None and type_ != "gateway_pat":
+        raise ConfigError(f"a {type_} credential needs a NAME: dynfarm credential upload-link NAME --type {type_}")
+    body: dict[str, Any] = {"type": type_}
+    if name is not None:
+        body["name"] = name
+    issued = client.request("POST", "/credential-uploads", json=body, operation_id="issue_credential_upload")
+    if json_flag:
+        emit(issued, json_flag=True)
+        return
+    rows = [
+        ("url", issued.get("upload_url")),
+        ("method", issued.get("method")),
+        ("expires", issued.get("expires_at")),
+        ("name", issued.get("name")),
+        ("type", issued.get("type")),
+    ]
+    width = max(len(label) for label, _ in rows) + 1
+    for label, value in rows:
+        click.echo(f"{label + ':':<{width}} {clean_text(str(value))}")
+    click.echo(
+        'send the value with one PUT of {"value": "..."} and no Authorization header; the link works once, '
+        "until it expires",
+        err=True,
     )
 
 

@@ -16,14 +16,18 @@ First release: a command-line client for the Dynapps Agent Farm API.
   keyring and the file, in that order. Every environment variable of the tool starts with `DYNFARM_`; those of other tools
   are not read. `auth status` tells an expired token from an invalid one and never prints it. A
   token is never sent over plain `http` except to a loopback address.
-- **Tasks**: `dynfarm task run|list|view|watch|logs|result|cancel|answer`, with `last` for your newest task, `--watch`
+- **Tasks**: `dynfarm task run|list|view|watch|logs|result|cancel|answer|transcript`, with `last` for your newest task, `--watch`
   and `--exit-status` for scripts, and result downloads checked against the farm's checksum. `task answer` replies to
   the question a running task's agent is waiting on, which `task view` shows with its number.
 - **Agents**: `dynfarm agent list|view|create|edit|delete`, from flags or a JSON file.
-- **Schedules**: `dynfarm schedule list|view|create|runs|fire|pause|resume|delete`.
-- **Credentials**: `dynfarm credential list|view|set|delete`. The secret is read only from a hidden prompt, standard
+- **Schedules**: `dynfarm schedule list|view|create|edit|runs|fire|pause|resume|delete`. `edit` sends only the fields passed;
+  each replaces the stored one whole, as the farm does.
+- **Credentials**: `dynfarm credential list|view|set|upload-link|delete`. The secret is read only from a hidden prompt, standard
   input, `--value-file` or `--value-env`; no option takes it on the command line, and it is sent in the body of one
   request and nowhere else.
+- **Conversation and chat**: `dynfarm task transcript ID` prints a finished task's conversation, page by page, and
+  `dynfarm link-code CHANNEL` asks for the one-time code that links your chat account to you. `credential upload-link`
+  issues a one-time link that takes a secret's value without it passing through the terminal.
 - **People**: `dynfarm person list|view|offboard|readmit` for tenant admins. `offboard` is a dry run unless `--apply`,
   which asks for the person's subject (`--yes` in scripts); `--transfer-to` names who receives the team's agents and
   shared credentials. `list --tenant` reads other tenants with a `farm:platform:read` key. `credential list` shows

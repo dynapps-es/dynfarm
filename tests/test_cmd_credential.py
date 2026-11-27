@@ -93,6 +93,7 @@ def test_the_credential_commands_declare_the_operations_they_call():
         ("get_credential", "view"),
         ("write_credential", "set_"),
         ("delete_credential", "delete"),
+        ("issue_credential_upload", "upload_link"),
     ):
         assert f"dynfarm.commands.credential.{callback}" in calls[operation_id]
 
@@ -548,3 +549,94 @@ def test_view_owner_shows_the_owner_and_without_admin_another_person_s_is_not_fo
     refused = run_cli(["credential", "view", "bobs", "--owner", "bob"])
     assert refused.exit_code == 1 and "credentials_not_found" in refused.stderr
     assert stored(fake_farm, "bobs", subject="bob") == "b"
+
+
+# -- upload-link --------------------------------------------------------------------------------------------------
+
+
+def link_fields(result) -> dict[str, str]:
+    assert result.exit_code == 0, result.output
+    return {line.split(":", 1)[0]: line.split(":", 1)[1].strip() for line in result.stdout.splitlines()}
+
+
+def test_the_types_upload_link_accepts_are_exactly_the_enum_of_the_pinned_openapi():
+    from fakefarm.farm import FIXTURE
+
+    from dynfarm.commands.credential import UPLOAD_TYPES
+
+    schema = json.loads(FIXTURE.read_text(encoding="utf-8"))["components"]["schemas"]["CredentialUploadCreate"]
+    assert list(UPLOAD_TYPES) == schema["properties"]["type"]["enum"]
+
+
+def test_upload_link_asks_for_a_one_time_link_and_shows_it_for_the_person_who_asked(run_cli, fake_farm):
+    result = run_cli(["credential", "upload-link", "git-readonly", "--type", "git_token"])
+    shown = link_fields(result)
+    assert body_of(sent(fake_farm, "issue_credential_upload")[0]) == {"type": "git_token", "name": "git-readonly"}
+    assert shown["name"] == "git-readonly" and shown["type"] == "git_token" and shown["method"] == "PUT"
+    assert shown["url"].startswith("https://farm.test/farm/api/v1/credential-uploads/")
+    assert shown["expires"] == "2026-10-20T12:01:00Z"
+    assert "one PUT" in result.stderr and shown["url"] not in result.stderr
+
+
+def test_upload_link_stores_nothing_and_sends_no_value(run_cli, fake_farm):
+    run_cli(["credential", "upload-link", "git-readonly", "--type", "git_token"])
+    assert stored(fake_farm, "git-readonly") is None and not fake_farm._credentials
+    assert "value" not in body_of(sent(fake_farm, "issue_credential_upload")[0])
+
+
+def test_upload_link_for_a_gateway_pat_needs_no_name(run_cli, fake_farm):
+    shown = link_fields(run_cli(["credential", "upload-link", "--type", "gateway_pat"]))
+    assert body_of(sent(fake_farm, "issue_credential_upload")[0]) == {"type": "gateway_pat"}
+    assert shown["name"] == "sp-gateway"
+
+
+def test_upload_link_of_any_other_type_without_a_name_is_refused_before_asking_the_farm(run_cli, fake_farm):
+    result = run_cli(["credential", "upload-link", "--type", "generic"])
+    assert result.exit_code == 2 and "needs a NAME" in result.output
+    assert not sent(fake_farm, "issue_credential_upload")
+
+
+def test_upload_link_refuses_a_type_the_link_does_not_take(run_cli, fake_farm):
+    result = run_cli(["credential", "upload-link", "k", "--type", "s3"])
+    assert result.exit_code == 2 and not sent(fake_farm, "issue_credential_upload")
+
+
+def test_upload_link_json_is_the_farms_answer(run_cli):
+    shown = json.loads(run_cli(["credential", "upload-link", "web-api", "--type", "generic", "--json"]).stdout)
+    assert set(shown) == {"upload_url", "method", "expires_at", "type", "name"}
+
+
+def test_upload_link_asking_again_gets_a_different_link(run_cli):
+    args = ["credential", "upload-link", "web-api", "--type", "generic"]
+    assert link_fields(run_cli(args))["url"] != link_fields(run_cli(args))["url"]
+
+
+@pytest.mark.parametrize(
+    ("args", "code"),
+    [
+        (["sp-gateway", "--type", "generic"], "credential_name_reserved"),
+        (["sp-gateway-x", "--type", "gateway_pat"], "credential_name_invalid"),
+        (["a/b", "--type", "generic"], "credentials_ref_out_of_tenant"),
+    ],
+)
+def test_upload_link_shows_the_farms_refusals_with_their_codes(run_cli, args, code):
+    result = run_cli(["credential", "upload-link", *args])
+    assert result.exit_code == 1 and code in result.output
+
+
+def test_upload_link_with_a_read_only_key_is_insufficient_scope(run_cli):
+    result = run_cli(["credential", "upload-link", "k", "--type", "generic"], token=READONLY)
+    assert result.exit_code == 1 and "insufficient_scope" in result.output
+
+
+def test_upload_link_is_never_repeated_by_itself_after_a_retryable_error(run_cli, fake_farm, sleeps):
+    fake_farm.fail_next("issue_credential_upload")
+    result = run_cli(["credential", "upload-link", "k", "--type", "generic"])
+    assert result.exit_code == 1 and len(sent(fake_farm, "issue_credential_upload")) == 1 and not sleeps
+
+
+def test_upload_link_under_debug_traces_the_request_but_never_the_link(run_cli):
+    result = run_cli(["--debug", "credential", "upload-link", "k", "--type", "generic"])
+    link = link_fields(result)["url"]
+    assert "POST /farm/api/v1/credential-uploads (issue_credential_upload) -> 201" in result.stderr
+    assert link not in result.stderr and link.rsplit("/", 1)[1] not in result.stderr

@@ -1,5 +1,5 @@
 """The read-only commands that say who you are to the farm and what the farm offers: `whoami`, `plugin list`,
-`callback-key`.
+`callback-key`, `link-code`.
 
 - **`whoami`** is `GET /whoami` (`farm-api.md` §3.2): the key making the call, nothing secret. It is the first thing to
   run when a command answers 404 or 403 (whose objects, which scopes). The default output is a few labelled lines;
@@ -9,6 +9,10 @@
   `agent_id` a task is launched with).
 - **`callback-key`** prints the public key(s) that verify task callbacks. It is public key material, safe to show and
   to pipe: JSON as the farm sent it, or `--pem` for just the PEM text, ready for a file.
+- **`link-code CHANNEL`** asks for the six-digit code that links *your* chat account on a channel (`teams`) to you:
+  write `/link <code>` to the tenant's bot and that chat acts as you, with your roles, until the link expires. The code
+  works once and for a few minutes, and whoever writes it first gets the link, so it is shown on standard output to
+  the person who asked and nowhere else (no log, no file). Asking again replaces the code.
 
 Text that came from the farm is cleaned of control characters before it reaches a terminal (`output`), so a subject or
 a plugin name cannot rewrite the person's screen.
@@ -22,7 +26,7 @@ from typing import Any
 import click
 
 from dynfarm.errors import FarmError
-from dynfarm.http import FarmClient, needs_client
+from dynfarm.http import FarmClient, needs_client, segment
 from dynfarm.output import Column, emit
 from dynfarm.registry import operation
 
@@ -116,3 +120,31 @@ def callback_key(client: FarmClient, pem: bool) -> None:
         raise FarmError(200, "response_invalid", "the farm sent no PEM key; use the JSON output")
     for text in texts:
         click.echo(text.rstrip("\n"))
+
+
+# -- link-code -----------------------------------------------------------------------------------------------------
+
+
+@click.command("link-code")
+@click.argument("channel")
+@click.option("--json", "json_flag", is_flag=True, help=JSON_HELP)
+@operation("create_link_code")
+@needs_client
+def link_code(client: FarmClient, channel: str, json_flag: bool) -> None:
+    """Get the one-time code that links your chat account on CHANNEL (e.g. teams) to you.
+
+    \b
+    dynfarm link-code teams       # then write `/link <code>` to the bot in Teams; `/unlink` there ends it
+
+    Show the code to nobody else: whoever writes it first is linked to you. It works once and for a few minutes.
+    """
+    answer = client.request("POST", f"/channels/{segment(channel)}/link-codes", operation_id="create_link_code")
+    if json_flag:
+        emit(answer, json_flag=True)
+        return
+    rows = [("code", answer.get("code")), ("channel", answer.get("channel")), ("expires", answer.get("expires_at"))]
+    width = max(len(label) for label, _ in rows) + 1
+    for label, value in rows:
+        click.echo(f"{label + ':':<{width}} {_show(value)}")
+    if answer.get("instruction"):
+        click.echo(_show(answer["instruction"]), err=True)

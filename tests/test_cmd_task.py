@@ -962,3 +962,160 @@ def test_the_task_flags_can_leave_out_the_correlation_id_for_a_schedules_task():
 
 def test_building_a_body_needs_no_command_at_all():
     assert build_task_body(TaskFlags(prompt="hi", scope="s")) == {"prompt": "hi", "scope": "s"}
+
+
+# -- transcript ---------------------------------------------------------------------------------------------------
+
+
+def conversation(count: int) -> list[dict]:
+    return [{"role": "user" if n % 2 else "assistant", "text": f"message {n}"} for n in range(1, count + 1)]
+
+
+def finished_with(fake_farm, messages, *, token=ALICE, state="succeeded") -> str:
+    task_id = fake_farm.seed_task(token, state=state)
+    fake_farm.seed_transcript(task_id, messages)
+    return task_id
+
+
+def test_transcript_prints_each_message_with_its_role_text_and_tool_calls(run_cli, fake_farm):
+    task_id = finished_with(
+        fake_farm,
+        [
+            {"role": "user", "text": "Review MR 7.\nBe brief."},
+            {
+                "text": "Looks fine.",
+                "tool_uses": [
+                    {
+                        "name": "Read",
+                        "input_summary": '{"path": "a.py"}',
+                        "result_summary": "ok\nsecond",
+                        "is_error": False,
+                    },
+                    {"name": "Bash", "input_summary": '{"cmd": "false"}', "result_summary": "exit 1", "is_error": True},
+                ],
+                "truncated": True,
+            },
+        ],
+    )
+    result = run_cli(["task", "transcript", task_id])
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    assert lines[0].startswith("#1 user (") and lines[1:3] == ["  Review MR 7.", "  Be brief."]
+    assert lines[3].startswith("#2 assistant (") and lines[3].endswith("[cut]")
+    assert "  Looks fine." in lines
+    assert '  - Read: {"path": "a.py"}' in lines and "      -> ok" in lines
+    assert '  ! Bash: {"cmd": "false"}' in lines and "      -> exit 1" in lines
+    assert "second" not in result.stdout  # one line of a result is enough: --json has the rest
+    assert sent(fake_farm, "get_transcript")[0].query == {}
+
+
+def test_transcript_json_is_the_farms_answer_verbatim(run_cli, fake_farm):
+    task_id = finished_with(fake_farm, conversation(2))
+    shown = printed(run_cli(["task", "transcript", task_id, "--json"]))
+    assert shown["task_id"] == task_id and shown["complete"] is True and shown["next_cursor"] is None
+    assert [m["text"] for m in shown["messages"]] == ["message 1", "message 2"]
+
+
+def test_transcript_pages_with_limit_and_cursor_and_says_how_to_go_on(run_cli, fake_farm):
+    task_id = finished_with(fake_farm, conversation(5))
+    first = run_cli(["task", "transcript", task_id, "--limit", "2"])
+    assert "message 2" in first.stdout and "message 3" not in first.stdout
+    assert "--cursor 2" in first.stderr
+    second = run_cli(["task", "transcript", task_id, "--limit", "2", "--cursor", "2"])
+    assert "message 3" in second.stdout and "message 4" in second.stdout and "message 5" not in second.stdout
+    assert sent(fake_farm, "get_transcript")[1].query == {"limit": ["2"], "cursor": ["2"]}
+
+
+def test_transcript_all_follows_every_page_and_json_merges_them(run_cli, fake_farm):
+    task_id = finished_with(fake_farm, conversation(5))
+    result = run_cli(["task", "transcript", task_id, "--limit", "2", "--all", "--json"])
+    shown = printed(result)
+    assert [m["seq"] for m in shown["messages"]] == [1, 2, 3, 4, 5] and shown["complete"] is True
+    assert len(sent(fake_farm, "get_transcript")) == 3
+    text = run_cli(["task", "transcript", task_id, "--limit", "2", "--all"]).stdout
+    assert text.count("#") == 5 and "--cursor" not in text
+
+
+def test_transcript_of_a_running_task_says_there_is_none_yet_and_does_not_loop_with_all(run_cli, fake_farm):
+    task_id = finished_with(fake_farm, conversation(3), state="running")
+    result = run_cli(["task", "transcript", task_id, "--all"])
+    assert result.exit_code == 0 and result.stdout == ""
+    assert "no conversation yet (the task is running)" in result.stderr
+    assert len(sent(fake_farm, "get_transcript")) == 1
+
+
+def test_transcript_stops_on_a_cursor_the_farm_repeats(run_cli, fake_farm):
+    task_id = finished_with(fake_farm, conversation(3))
+
+    def stuck(call):
+        row = fake_farm._tasks[task_id]
+        return 200, {
+            "task_id": task_id,
+            "tenant": "tenant-a",
+            "scope": None,
+            "state": "succeeded",
+            "complete": False,
+            "next_cursor": "same",
+            "messages": row.transcript[:1],
+        }
+
+    fake_farm.override("get_transcript", stuck)
+    result = run_cli(["task", "transcript", task_id, "--all"])
+    assert result.exit_code == 1 and "pagination_loop" in result.output
+
+
+def test_transcript_resolves_last_to_your_newest_task(run_cli, fake_farm):
+    task_id = finished_with(fake_farm, conversation(1))
+    assert "message 1" in run_cli(["task", "transcript", "last"]).stdout
+    assert sent(fake_farm, "get_transcript")[0].path.endswith(f"/tasks/{task_id}/transcript")
+
+
+def test_transcript_limit_above_200_is_refused_before_asking_the_farm(run_cli, fake_farm):
+    task_id = finished_with(fake_farm, conversation(1))
+    assert run_cli(["task", "transcript", task_id, "--limit", "201"]).exit_code == 2
+    assert not sent(fake_farm, "get_transcript")
+
+
+def test_transcript_of_somebody_elses_task_is_not_found_and_an_admin_reads_it(run_cli, fake_farm):
+    task_id = finished_with(fake_farm, conversation(1), token=ALICE)
+    other = run_cli(["task", "transcript", task_id], token=BOB)
+    assert other.exit_code == 1 and "not_found" in other.output
+    assert run_cli(["task", "transcript", task_id], token=ADMIN).exit_code == 0
+
+
+def test_transcript_shows_a_retention_expiry_with_its_code(run_cli, fake_farm):
+    task_id = finished_with(fake_farm, conversation(1))
+    fake_farm.expire_result(task_id)
+    result = run_cli(["task", "transcript", task_id])
+    assert result.exit_code == 1 and "transcript_expired" in result.output
+
+
+def test_transcript_cleans_control_characters_out_of_what_the_agent_wrote(run_cli, fake_farm):
+    task_id = finished_with(
+        fake_farm, [{"text": "fine\x1b[2Jgone", "tool_uses": [{"name": "Re\x1bad", "input_summary": "x"}]}]
+    )
+    result = run_cli(["task", "transcript", task_id])
+    assert "\x1b" not in result.stdout and "fine [2Jgone" in result.stdout
+
+
+# -- view: where the task notifies --------------------------------------------------------------------------------
+
+
+def test_view_shows_where_the_task_notifies_without_a_url_and_never_the_old_callback_field(run_cli, fake_farm):
+    task_id = fake_farm.seed_task(ALICE)
+    fake_farm.set_task(
+        task_id,
+        notify=[
+            {
+                "kind": "url",
+                "format": "json",
+                "events": ["final"],
+                "final": {"status": "delivered", "attempts": 1, "last_error": None},
+            },
+            {"kind": "conversation", "events": ["final", "message"]},
+        ],
+    )
+    result = run_cli(["task", "view", task_id])
+    assert "notify:" in result.stdout and "json (final: delivered), conversation (final, message)" in result.stdout
+    assert "callback" not in result.stdout
+    assert "callback" not in run_cli(["task", "run", "--help"]).stdout

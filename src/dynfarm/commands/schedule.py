@@ -4,6 +4,7 @@
     schedule view ID      GET    /schedules/{id}        schedule runs ID         GET  /schedules/{id}/tasks
     schedule fire ID      POST   /schedules/{id}/fire  schedule pause ID        POST /schedules/{id}/pause
     schedule delete ID    DELETE /schedules/{id}       schedule resume ID       POST /schedules/{id}/resume
+    schedule edit ID      PATCH  /schedules/{id}
 
 A schedule is a `task` (exactly the body of `POST /tasks`) plus a `recurrence` (a 5-field cron in an IANA timezone,
 optionally bounded by `starts_at`, `ends_at` or `max_runs`) and an `overlap` policy (`farm-api.md` §7.9). It belongs to
@@ -27,6 +28,14 @@ Choices worth knowing:
 - **`fire` creates a task now** (and the farm records it as `trigger: manual`); it does not move `next_fire_at` or
   count against `max_runs`. It refuses with `409 schedule_not_active` or `409 schedule_overlap` instead of skipping
   quietly, as a cron firing would. A launch is never repeated by itself, not even after a network error.
+- **`edit` sends only what is passed, and a field it sends replaces the stored one whole** (`farm-api.md` §7.9): a new
+  task (an `AGENT` or `--prompt`, with the same flags as `create`) is not merged with the old one, so it must be
+  complete (`--body-file` keeps `notify` destinations and the rest); a new recurrence needs `--cron` and `--timezone`
+  again; `--metadata-file` replaces the metadata object. `--no-recurrence` makes it a schedule that only runs with
+  `fire`, `--clear-name` and `--clear-metadata` empty those fields. The id, the counters, the state (a paused schedule
+  stays paused) and the tasks already fired are untouched, and a task already running keeps the body it was fired
+  with. A finished schedule cannot change its recurrence (`409 schedule_finished`). An edit is never repeated by
+  itself.
 - **`delete` asks first**, like every command that removes something (`--yes` in scripts). It stops the schedule; the
   tasks it already fired are untouched.
 """
@@ -286,6 +295,133 @@ def create(
     emit(created, json_flag=json_flag, table=SCHEDULE_COLUMNS)
     if not json_flag:
         _note(f"pause it with `dynfarm schedule pause {created['schedule_id']}`")
+
+
+# -- edit ---------------------------------------------------------------------------------------------------------
+
+
+@schedule.command()
+@_id_arg
+@click.argument("agent", required=False)
+@task_body_options(correlation_id=False)
+@click.option("--name", metavar="TEXT", help="A new name for the schedule (plain text, up to 200 characters).")
+@click.option("--clear-name", is_flag=True, help="Remove the schedule's name.")
+@click.option(
+    "--metadata-file",
+    metavar="FILE",
+    help="New metadata as a JSON object ('-' for standard input); it replaces the stored object, keys are not merged.",
+)
+@click.option("--clear-metadata", is_flag=True, help="Reset the metadata to an empty object.")
+@click.option("--cron", metavar="EXPR", help="A new recurrence: five fields, no seconds. Needs --timezone too.")
+@click.option("--timezone", metavar="TZ", help="The IANA timezone of the new cron, e.g. Europe/Madrid.")
+@click.option(
+    "--recurrence-file",
+    metavar="FILE",
+    help="The new recurrence as JSON ('-' for standard input): cron, timezone, starts_at, ends_at, max_runs.",
+)
+@click.option("--starts-at", metavar="TIME", help="Do not fire before this ISO 8601 time.")
+@click.option("--ends-at", metavar="TIME", help="Stop firing from this ISO 8601 time on; the schedule finishes.")
+@click.option(
+    "--max-runs", type=click.IntRange(min=1), metavar="N", help="Stop after N firings; the schedule finishes."
+)
+@click.option(
+    "--no-recurrence",
+    is_flag=True,
+    help="Stop firing on a cron: the schedule then only runs with `schedule fire`.",
+)
+@click.option(
+    "--overlap",
+    type=click.Choice(["skip", "allow"]),
+    help="A firing due while the previous task still runs: `skip` drops it, `allow` runs both.",
+)
+@click.option("--json", "json_flag", is_flag=True, help=JSON_HELP)
+@operation("update_schedule")
+@needs_client
+def edit(
+    client: FarmClient,
+    schedule_id: str,
+    agent: str | None,
+    task_flags: TaskFlags,
+    name: str | None,
+    clear_name: bool,
+    metadata_file: str | None,
+    clear_metadata: bool,
+    cron: str | None,
+    timezone: str | None,
+    recurrence_file: str | None,
+    starts_at: str | None,
+    ends_at: str | None,
+    max_runs: int | None,
+    no_recurrence: bool,
+    overlap: str | None,
+    json_flag: bool,
+) -> None:
+    """Change a schedule: only what you pass is sent, and each field replaces the stored one whole.
+
+    The task is replaced as a whole too: give the AGENT or --prompt again, with everything it needs. The same goes for
+    the recurrence: --cron comes with --timezone. The state, the counters and the tasks already fired are kept.
+
+    \b
+    dynfarm schedule edit SCHEDULE_ID --overlap allow
+    dynfarm schedule edit SCHEDULE_ID --cron "0 9 * * 1-5" --timezone Europe/Madrid
+    dynfarm schedule edit SCHEDULE_ID --name "Morning review" --max-runs 20 --cron "0 8 * * *" --timezone UTC
+    dynfarm schedule edit SCHEDULE_ID code-reviewer --input "Review my open MRs, oldest first."
+    dynfarm schedule edit SCHEDULE_ID --no-recurrence
+    """
+    for flag, given, other_flag, other in (
+        ("--name", name is not None, "--clear-name", clear_name),
+        ("--metadata-file", metadata_file is not None, "--clear-metadata", clear_metadata),
+    ):
+        if given and other:
+            raise ConfigError(f"give {flag} or {other_flag}, not both")
+    recurrence_given = any(
+        value is not None for value in (cron, timezone, recurrence_file, starts_at, ends_at, max_runs)
+    )
+    if no_recurrence and recurrence_given:
+        raise ConfigError("--no-recurrence cannot be combined with --cron, --timezone or the other recurrence flags")
+    readers = _stdin_readers(
+        ("--prompt-file", task_flags.prompt_file),
+        ("--input-file", task_flags.input_file),
+        ("--body-file", task_flags.body_file),
+        ("--recurrence-file", recurrence_file),
+        ("--metadata-file", metadata_file),
+    )
+    if len(readers) > 1:
+        raise ConfigError(f"only one of {', '.join(readers)} can read standard input")
+
+    body: dict[str, Any] = {}
+    task_given = agent is not None or any(value is not None for value in vars(task_flags).values())
+    if task_given:
+        body["task"] = build_task_body(task_flags, agent=agent)
+    if name is not None:
+        body["name"] = name
+    if clear_name:
+        body["name"] = None
+    if metadata_file is not None:
+        body["metadata"] = read_json_object(metadata_file, "--metadata-file", "metadata")
+    if clear_metadata:
+        body["metadata"] = None
+    if recurrence_given:
+        body["recurrence"] = build_recurrence(
+            recurrence_file=recurrence_file,
+            cron=cron,
+            timezone=timezone,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            max_runs=max_runs,
+        )
+    if no_recurrence:
+        body["recurrence"] = None
+    if overlap is not None:
+        body["overlap"] = overlap
+    if not body:
+        raise ConfigError(
+            "nothing to change: pass what to edit (--name, --cron and --timezone, --overlap, an AGENT...)"
+        )
+    if "task" in body and stores_text(body["task"]):
+        _note(STORED_WARNING)
+    edited = client.request("PATCH", _path(schedule_id), json=body, operation_id="update_schedule")
+    emit(edited, json_flag=json_flag, table=SCHEDULE_COLUMNS)
 
 
 # -- runs ---------------------------------------------------------------------------------------------------------
